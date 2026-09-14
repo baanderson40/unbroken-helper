@@ -1,0 +1,358 @@
+{
+  "schemaVersion": 1,
+  "boards": [
+    {
+      "key": "board1",
+      "territoryId": 1339,
+      "routes": [
+        {
+          "key": "board1-default",
+          "enabled": true,
+          "nodes": [
+            {
+              "phase": "Stage1",
+              "kind": "Battle",
+              "stageNumber": 1,
+              "variant": "",
+              "name": "Stage 1",
+              "position": { "x": -699.808, "y": 0.0, "z": -8.312 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "",
+              "recoveryThreshold": 60,
+              "recoveryTarget": 90,
+              "familiarStageNumber": 1,
+              "familiarRosterKey": "board1-stage1",
+              "directResultFlow": false,
+              "combat": {
+                "displayName": "Board 1 Stage 1",
+                "targetBaseIds": [ 19335, 19334 ],
+                "priorityTargetBaseId": 0
+              }
+            }
+          ]
+        }
+      ],
+      "collisionData": {
+        "layerKey": 0,
+        "pcbPathCrc": "",
+        "positions": []
+      }
+    },
+    {
+      "key": "board2",
+      "territoryId": 1340,
+      "routes": [
+        {
+          "key": "board2-b",
+          "enabled": true,
+          "nodes": [
+            {
+              "phase": "Stage1",
+              "kind": "Battle",
+              "stageNumber": 1,
+              "variant": "",
+              "name": "Stage 1",
+              "position": { "x": -700.000, "y": 0.0, "z": -8.318 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "Shop2",
+              "recoveryThreshold": 60,
+              "recoveryTarget": 90,
+              "familiarStageNumber": 1,
+              "familiarRosterKey": "board2-stage1",
+              "directResultFlow": false,
+              "combat": {
+                "displayName": "Board 2 Stage 1",
+                "targetBaseIds": [ 19539 ],
+                "priorityTargetBaseId": 0
+              }
+            },
+            {
+              "phase": "Shop2",
+              "kind": "Shop",
+              "stageNumber": 2,
+              "variant": "",
+              "name": "Stage 2 shop",
+              "position": { "x": -700.003, "y": 0.0, "z": -18.000 },
+              "expectedAddon": "XBMContentsItemShop",
+              "nextPhase": "Stage3B",
+              "familiarStageNumber": 0,
+              "familiarRosterKey": "",
+              "directResultFlow": false,
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage3B",
+              "kind": "Battle",
+              "stageNumber": 3,
+              "variant": "B",
+              "name": "Stage 3B",
+              "position": { "x": -695.329, "y": 0.0, "z": -25.144 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "Rest4B",
+              "recoveryThreshold": 10,
+              "recoveryTarget": 20,
+              "familiarStageNumber": 3,
+              "familiarRosterKey": "board2-stage3b",
+              "directResultFlow": false,
+              "combat": {
+                "displayName": "Board 2 Stage 3B",
+                "targetBaseIds": [ 19544 ],
+                "priorityTargetBaseId": 0
+              }
+            },
+            {
+              "phase": "Rest4B",
+              "kind": "Rest",
+              "stageNumber": 4,
+              "variant": "B",
+              "name": "Stage 4B rest",
+              "position": { "x": -694.744, "y": 0.0, "z": -33.627 },
+              "expectedAddon": "XBMPetParty",
+              "nextPhase": "Stage5",
+              "familiarStageNumber": 0,
+              "familiarRosterKey": "",
+              "directResultFlow": false,
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage5",
+              "kind": "Battle",
+              "stageNumber": 5,
+              "variant": "",
+              "name": "Stage 5",
+              "position": { "x": -700.116, "y": 0.0, "z": -41.592 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "Treasure6",
+              "recoveryThreshold": 60,
+              "recoveryTarget": 90,
+              "familiarStageNumber": 5,
+              "familiarRosterKey": "board2-stage5",
+              "directResultFlow": false,
+              "combat": {
+                "displayName": "Board 2 Stage 5",
+                "targetBaseIds": [ 19549, 19548 ],
+                "priorityTargetBaseId": 19549
+              }
+            },
+            {
+              "phase": "Treasure6",
+              "kind": "Treasure",
+              "stageNumber": 6,
+              "variant": "",
+              "name": "Treasure 6",
+              "position": { "x": -700.365, "y": 0.0, "z": -50.835 },
+              "expectedAddon": "XBMContentsTreasure",
+              "nextPhase": "Stage7",
+              "familiarStageNumber": 0,
+              "familiarRosterKey": "",
+              "directResultFlow": false,
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage7",
+              "kind": "Battle",
+              "stageNumber": 7,
+              "variant": "",
+              "name": "Stage 7",
+              "position": { "x": -700.265, "y": 0.0, "z": -59.913 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "Treasure8",
+              "recoveryThreshold": 60,
+              "recoveryTarget": 90,
+              "familiarStageNumber": 7,
+              "familiarRosterKey": "board2-stage7",
+              "directResultFlow": false,
+              "combat": {
+                "displayName": "Board 2 Stage 7",
+                "targetBaseIds": [ 19552, 19551 ],
+                "priorityTargetBaseId": 19552
+              }
+            },
+            {
+              "phase": "Treasure8",
+              "kind": "Treasure",
+              "stageNumber": 8,
+              "variant": "",
+              "name": "Treasure 8",
+              "position": { "x": -695.762, "y": 0.0, "z": -66.826 },
+              "expectedAddon": "XBMContentsTreasure",
+              "nextPhase": "Shop9",
+              "familiarStageNumber": 0,
+              "familiarRosterKey": "",
+              "directResultFlow": false,
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Shop9",
+              "kind": "Shop",
+              "stageNumber": 9,
+              "variant": "",
+              "name": "Stage 9 shop",
+              "position": { "x": -700.271, "y": 0.0, "z": -74.179 },
+              "expectedAddon": "XBMContentsItemShop",
+              "nextPhase": "Stage10",
+              "familiarStageNumber": 0,
+              "familiarRosterKey": "",
+              "directResultFlow": false,
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage10",
+              "kind": "Battle",
+              "stageNumber": 10,
+              "variant": "",
+              "name": "Stage 10",
+              "position": { "x": -699.314, "y": 0.0, "z": -83.571 },
+              "expectedAddon": "XBMStageDetailList",
+              "nextPhase": "",
+              "recoveryThreshold": 60,
+              "recoveryTarget": 90,
+              "familiarStageNumber": 10,
+              "familiarRosterKey": "board2-stage10",
+              "directResultFlow": true,
+              "combat": {
+                "displayName": "Board 2 Stage 10",
+                "targetBaseIds": [ 19557, 19558 ],
+                "priorityTargetBaseId": 19557
+              }
+            }
+          ]
+        },
+        {
+          "key": "board2-a",
+          "enabled": false,
+          "nodes": [
+            {
+              "phase": "Stage1",
+              "kind": "Battle",
+              "stageNumber": 1,
+              "variant": "",
+              "name": "Stage 1",
+              "position": { "x": -700.000, "y": 0.0, "z": -8.318 },
+              "nextPhase": "Shop2",
+              "familiarStageNumber": 1,
+              "combat": { "displayName": "Board 2 Stage 1", "targetBaseIds": [ 19539 ], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Shop2",
+              "kind": "Shop",
+              "stageNumber": 2,
+              "variant": "",
+              "name": "Stage 2 shop",
+              "position": { "x": -700.003, "y": 0.0, "z": -18.000 },
+              "nextPhase": "Stage3A",
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage3A",
+              "kind": "Battle",
+              "stageNumber": 3,
+              "variant": "A",
+              "name": "Stage 3A",
+              "position": { "x": -705.000, "y": 0.0, "z": -25.500 },
+              "nextPhase": "Rest4A",
+              "recoveryThreshold": 10,
+              "recoveryTarget": 20,
+              "familiarStageNumber": 3,
+              "familiarRosterKey": "board2-stage3a",
+              "combat": { "displayName": "Board 2 Stage 3A", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Rest4A",
+              "kind": "Rest",
+              "stageNumber": 4,
+              "variant": "A",
+              "name": "Stage 4A rest",
+              "position": { "x": -705.000, "y": 0.0, "z": -34.500 },
+              "nextPhase": "Stage5",
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage5",
+              "kind": "Battle",
+              "stageNumber": 5,
+              "variant": "",
+              "name": "Stage 5",
+              "position": { "x": -700.116, "y": 0.0, "z": -41.592 },
+              "nextPhase": "Treasure6",
+              "familiarStageNumber": 5,
+              "combat": { "displayName": "Board 2 Stage 5", "targetBaseIds": [ 19549, 19548 ], "priorityTargetBaseId": 19549 }
+            },
+            {
+              "phase": "Treasure6",
+              "kind": "Treasure",
+              "stageNumber": 6,
+              "variant": "",
+              "name": "Treasure 6",
+              "position": { "x": -700.365, "y": 0.0, "z": -50.835 },
+              "nextPhase": "Stage7",
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage7",
+              "kind": "Battle",
+              "stageNumber": 7,
+              "variant": "",
+              "name": "Stage 7",
+              "position": { "x": -700.265, "y": 0.0, "z": -59.913 },
+              "nextPhase": "Treasure8",
+              "familiarStageNumber": 7,
+              "combat": { "displayName": "Board 2 Stage 7", "targetBaseIds": [ 19552, 19551 ], "priorityTargetBaseId": 19552 }
+            },
+            {
+              "phase": "Treasure8",
+              "kind": "Treasure",
+              "stageNumber": 8,
+              "variant": "",
+              "name": "Treasure 8",
+              "position": { "x": -695.762, "y": 0.0, "z": -66.826 },
+              "nextPhase": "Shop9",
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Shop9",
+              "kind": "Shop",
+              "stageNumber": 9,
+              "variant": "",
+              "name": "Stage 9 shop",
+              "position": { "x": -700.271, "y": 0.0, "z": -74.179 },
+              "nextPhase": "Stage10",
+              "combat": { "displayName": "", "targetBaseIds": [], "priorityTargetBaseId": 0 }
+            },
+            {
+              "phase": "Stage10",
+              "kind": "Battle",
+              "stageNumber": 10,
+              "variant": "",
+              "name": "Stage 10",
+              "position": { "x": -699.314, "y": 0.0, "z": -83.571 },
+              "nextPhase": "",
+              "familiarStageNumber": 10,
+              "directResultFlow": true,
+              "combat": { "displayName": "Board 2 Stage 10", "targetBaseIds": [ 19557, 19558 ], "priorityTargetBaseId": 19557 }
+            }
+          ]
+        }
+      ],
+      "collisionData": {
+        "layerKey": 39456,
+        "pcbPathCrc": "0x5C0ECE41",
+        "positions": [
+          { "instanceKey": "53039139733372928", "label": "observed-01", "routeHint": "Stage1", "position": { "x": -700.0, "y": 0.0, "z": -9.0 } },
+          { "instanceKey": "53039144028340224", "label": "observed-02", "routeHint": "Stage3B-candidate", "position": { "x": -695.0, "y": 0.0, "z": -25.5 } },
+          { "instanceKey": "53039148323307520", "label": "observed-03", "routeHint": "Stage5", "position": { "x": -700.0, "y": 0.0, "z": -42.0 } },
+          { "instanceKey": "53039152601497600", "label": "observed-04", "routeHint": "Stage4B-candidate", "position": { "x": -695.0, "y": 0.0, "z": -34.5 } },
+          { "instanceKey": "53039156896464896", "label": "observed-05", "routeHint": "Stage4A-candidate", "position": { "x": -705.0, "y": 0.0, "z": -34.5 } },
+          { "instanceKey": "53039165486399488", "label": "observed-06", "routeHint": "Treasure6", "position": { "x": -700.0, "y": 0.0, "z": -51.0 } },
+          { "instanceKey": "53039169781366784", "label": "observed-07", "routeHint": "Stage3A-candidate", "position": { "x": -705.0, "y": 0.0, "z": -25.5 } },
+          { "instanceKey": "53039174076334080", "label": "observed-08", "routeHint": "unmapped", "position": { "x": -695.0, "y": 0.0, "z": -67.5 } },
+          { "instanceKey": "53039182666268672", "label": "observed-09", "routeHint": "Shop2", "position": { "x": -700.0, "y": 0.0, "z": -18.0 } },
+          { "instanceKey": "53039186961235968", "label": "observed-10", "routeHint": "Stage10", "position": { "x": -700.0, "y": 0.0, "z": -84.0 } },
+          { "instanceKey": "53521649227530240", "label": "observed-11", "routeHint": "Stage7", "position": { "x": -700.0, "y": 0.0, "z": -60.0 } },
+          { "instanceKey": "53521662229872640", "label": "observed-12", "routeHint": "unmapped", "position": { "x": -705.0, "y": 0.0, "z": -67.5 } },
+          { "instanceKey": "53521674997334016", "label": "observed-13", "routeHint": "Shop9", "position": { "x": -700.0, "y": 0.0, "z": -75.0 } }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "Author": "baanderson40",
+  "Name": "Unbroken Helper",
+  "Punchline": "Debug tools for researching the Crucible of the Unbroken.",
+  "Description": "A development plugin for inspecting and automating research around the Crucible of the Unbroken.",
+  "RepoUrl": "https://github.com/baanderson40/unbroken-helper",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "beastmaster",
+    "crucible",
+    "debug",
+    "unbroken"
+  ]
+}
