@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -24,6 +25,7 @@ public sealed class DebugWindow : Window, IDisposable
     }
 
     private readonly Plugin plugin;
+    private readonly Dictionary<string, string> familiarSearches = new();
     private DebugSection selectedSection = DebugSection.Overview;
     private int xbmpetRow = 1;
     private float lgbCollisionRadius = 100f;
@@ -156,9 +158,21 @@ public sealed class DebugWindow : Window, IDisposable
         }
         ImGui.TextWrapped("Stage selection replaces configured familiars below this HP percentage with the next eligible roster pet.");
         ImGui.Separator();
-        DrawFamiliarRoster(1);
-        ImGui.Separator();
-        DrawFamiliarRoster(2);
+        if (ImGui.CollapsingHeader("Board 1 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawFamiliarRoster(1);
+        }
+
+        if (ImGui.CollapsingHeader("Board 2 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawFamiliarRoster(2);
+        }
+
+        if (ImGui.CollapsingHeader("Board 3 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawFamiliarRoster(3);
+        }
+
         ImGui.Separator();
         if (ImGui.CollapsingHeader("Board 1 Battle Stages", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -172,6 +186,17 @@ public sealed class DebugWindow : Window, IDisposable
             DrawStageRoster(2, 5, "Board 2 Stage 5 - Voidmancer");
             DrawStageRoster(2, 7, "Board 2 Stage 7 - Tablitaur");
             DrawStageRoster(2, 10, "Board 2 Stage 10 - Loosefrox / Chewchum");
+        }
+
+        if (ImGui.CollapsingHeader("Board 3 Battle Stages", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawStageRoster(3, 1, "Board 3 Stage 1 - Cavalier / Bone Bishop");
+            DrawStageRoster(3, 2, "Board 3 Stage 2 - Ymir / Sahagin");
+            DrawStageRoster(3, 4, "Board 3A Stage 4A - Zu", "A");
+            DrawStageRoster(3, 4, "Board 3B Stage 4B - Catoblepas", "B");
+            DrawStageRoster(3, 6, "Board 3 Stage 6 - Lakhamu");
+            DrawStageRoster(3, 8, "Board 3 Stage 8 - Crawling / Shambling / Siren");
+            DrawStageRoster(3, 12, "Board 3 Stage 12 - Guttler");
         }
     }
 
@@ -206,20 +231,43 @@ public sealed class DebugWindow : Window, IDisposable
     {
         var roster = plugin.GetFamiliarRoster(board);
         ImGui.TextUnformatted($"Board {board} ({roster.Count}/{plugin.FamiliarRosterCapacity(board)})");
-        if (ImGui.BeginCombo($"Add familiar##board-{board}", "Select familiar"))
+        var unlockedDataReady = plugin.UnlockedFamiliarDataReady;
+        ImGui.TextUnformatted($"Unlocked familiars: {plugin.UnlockedFamiliarCount}/50");
+        if (!unlockedDataReady)
         {
+            ImGui.TextDisabled("Unlocked familiar data is still loading.");
+        }
+
+        if (unlockedDataReady && ImGui.BeginCombo($"Add familiar##board-{board}", "Select familiar"))
+        {
+            var searchKey = $"board-roster-{board}";
+            var search = GetFamiliarSearch(searchKey);
+            ImGui.SetNextItemWidth(240f);
+            if (ImGui.InputText($"Search by number or name##{searchKey}", ref search, 64))
+            {
+                familiarSearches[searchKey] = search;
+            }
+
+            var matchingFamiliarCount = 0;
             for (var number = 1; number <= 50; number++)
             {
-                if (roster.Contains(number))
+                if (roster.Contains(number) || !plugin.IsFamiliarUnlocked(number) ||
+                    !MatchesFamiliarSearch(number, search))
                 {
                     continue;
                 }
 
+                matchingFamiliarCount++;
                 var label = $"No. {number} - {plugin.FamiliarName(number)}";
                 if (ImGui.Selectable(label))
                 {
                     plugin.AddFamiliarToRoster(board, number);
                 }
+            }
+
+            if (matchingFamiliarCount == 0)
+            {
+                ImGui.TextDisabled("No matching familiars.");
             }
 
             ImGui.EndCombo();
@@ -239,24 +287,39 @@ public sealed class DebugWindow : Window, IDisposable
         }
     }
 
-    private void DrawStageRoster(int board, int stage, string label)
+    private void DrawStageRoster(int board, int stage, string label, string variant = "")
     {
         var boardRoster = plugin.GetFamiliarRoster(board);
-        var stageRoster = plugin.GetStageFamiliarRoster(board, stage);
+        var stageRoster = plugin.GetStageFamiliarRoster(board, stage, variant);
         ImGui.TextUnformatted($"{label} ({stageRoster.Count}/3)");
-        if (ImGui.BeginCombo($"Add familiar##stage-{board}-{stage}", "Select familiar"))
+        if (ImGui.BeginCombo($"Add familiar##stage-{board}-{stage}-{variant}", "Select familiar"))
         {
+            var searchKey = $"stage-roster-{board}-{stage}-{variant}";
+            var search = GetFamiliarSearch(searchKey);
+            ImGui.SetNextItemWidth(240f);
+            if (ImGui.InputText($"Search by number or name##{searchKey}", ref search, 64))
+            {
+                familiarSearches[searchKey] = search;
+            }
+
+            var matchingFamiliarCount = 0;
             foreach (var number in boardRoster)
             {
-                if (stageRoster.Contains(number))
+                if (stageRoster.Contains(number) || !MatchesFamiliarSearch(number, search))
                 {
                     continue;
                 }
 
+                matchingFamiliarCount++;
                 if (ImGui.Selectable($"No. {number} - {plugin.FamiliarName(number)}"))
                 {
-                    plugin.AddStageFamiliar(board, stage, number);
+                    plugin.AddStageFamiliar(board, stage, number, variant);
                 }
+            }
+
+            if (matchingFamiliarCount == 0)
+            {
+                ImGui.TextDisabled("No matching familiars.");
             }
 
             ImGui.EndCombo();
@@ -264,17 +327,25 @@ public sealed class DebugWindow : Window, IDisposable
 
         foreach (var number in stageRoster.ToArray())
         {
-            ImGui.PushID($"stage-{board}-{stage}-familiar-{number}");
+            ImGui.PushID($"stage-{board}-{stage}-{variant}-familiar-{number}");
             ImGui.TextUnformatted($"No. {number} - {plugin.FamiliarName(number)}");
             ImGui.SameLine();
             if (ImGui.SmallButton("Remove"))
             {
-                plugin.RemoveStageFamiliar(board, stage, number);
+                plugin.RemoveStageFamiliar(board, stage, number, variant);
             }
 
             ImGui.PopID();
         }
     }
+
+    private string GetFamiliarSearch(string key)
+        => familiarSearches.TryGetValue(key, out var search) ? search : string.Empty;
+
+    private bool MatchesFamiliarSearch(int number, string search)
+        => string.IsNullOrWhiteSpace(search) ||
+            number.ToString().Contains(search, StringComparison.OrdinalIgnoreCase) ||
+            plugin.FamiliarName(number).Contains(search, StringComparison.OrdinalIgnoreCase);
 
     private void DrawOverview()
     {
@@ -368,8 +439,8 @@ public sealed class DebugWindow : Window, IDisposable
 
     private void DrawEntry()
     {
-        ImGui.TextUnformatted("First Board Entry");
-        ImGui.TextWrapped("Targets Lauda, enters the Crucible, selects the first board, challenges it, and moves to the recorded starting coordinate with VNav.");
+        ImGui.TextUnformatted("Board Entry Automation");
+        ImGui.TextWrapped("Targets Lauda, enters the Crucible, selects a board, challenges it, and follows the recorded route with VNav.");
         ImGui.Separator();
         ImGui.TextUnformatted($"State: {plugin.EntryStateText}");
         ImGui.TextUnformatted($"Waiting for: {plugin.EntryTarget}");
@@ -382,16 +453,24 @@ public sealed class DebugWindow : Window, IDisposable
 
         if (!plugin.EntryActive)
         {
-            ImGui.SameLine();
             if (ImGui.Button("Start Second Board Entry"))
             {
                 plugin.StartSecondBoardEntry();
+            }
+
+            if (ImGui.Button("Start Third Board 3A Entry"))
+            {
+                plugin.StartThirdBoardAEntry();
+            }
+
+            if (ImGui.Button("Start Third Board 3B Entry"))
+            {
+                plugin.StartThirdBoardBEntry();
             }
         }
 
         if (plugin.EntryActive)
         {
-            ImGui.SameLine();
             if (ImGui.Button("Stop Entry"))
             {
                 plugin.StopEntry();

@@ -20,4 +20,4 @@ The project currently expects the Dalamud development SDK and ECommons package t
 
 ## Status
 
-This is development-stage software. Board 2 B is the active route. Board 2 A data is preserved in the route catalog but is not currently selected by the automation.
+This is development-stage software. Board 2 B and the selectable Board 3A/3B routes are available to the automation. Board 2 A and Board 3 random/alternate branches are preserved in the route catalog but are not selected by the automation. Board 3 requires its own configured familiar roster and route-specific battle-stage rosters. Temporal Sand is dispatched after board-exit transition settling; Thief's Eye and Merchant's Eye are dispatched after stage load, before target selection and combat providers. Category 2 support, attack, and recovery items are dispatched automatically during combat or recovery; item consumption is verified from the HUD slot with up to three attempts per item ID. Live-game verification of addon callback behavior is still required.
