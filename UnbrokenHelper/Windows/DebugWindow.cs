@@ -291,7 +291,8 @@ public sealed class DebugWindow : Window, IDisposable
     {
         var boardRoster = plugin.GetFamiliarRoster(board);
         var stageRoster = plugin.GetStageFamiliarRoster(board, stage, variant);
-        ImGui.TextUnformatted($"{label} ({stageRoster.Count}/3)");
+        var assignedCount = stageRoster.Count(number => number > 0);
+        ImGui.TextUnformatted($"{label} ({assignedCount}/3)");
         if (ImGui.BeginCombo($"Add familiar##stage-{board}-{stage}-{variant}", "Select familiar"))
         {
             var searchKey = $"stage-roster-{board}-{stage}-{variant}";
@@ -325,7 +326,7 @@ public sealed class DebugWindow : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        foreach (var number in stageRoster.ToArray())
+        foreach (var number in stageRoster.Where(number => number > 0).ToArray())
         {
             ImGui.PushID($"stage-{board}-{stage}-{variant}-familiar-{number}");
             ImGui.TextUnformatted($"No. {number} - {plugin.FamiliarName(number)}");

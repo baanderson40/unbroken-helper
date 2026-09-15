@@ -235,7 +235,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private Vector3 Stage9ShopPosition => new(-700.271f, 0f, -74.179f);
     private List<int> ConfiguredFamiliarNumbers => GetMutableFamiliarRoster(selectedBoard);
     private List<int> ConfiguredStageFamiliarNumbers => GetMutableStageFamiliarRoster(
-        selectedBoard, CurrentRouteNode?.FamiliarStageNumber ?? 0, CurrentRouteNode?.Variant ?? string.Empty);
+        selectedBoard, CurrentRouteNode?.FamiliarStageNumber ?? 0, CurrentRouteNode?.Variant ?? string.Empty)
+        .Where(number => number > 0)
+        .ToList();
 
     private readonly PluginConfiguration configuration;
     private readonly BoardRouteBoard? board1Definition;
@@ -245,6 +247,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board2RouteNodes;
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3ARouteNodes;
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3BRouteNodes;
+    private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private readonly ICallGateSubscriber<bool> vnavIsReady;
     private readonly ICallGateSubscriber<Vector3, bool, bool> vnavPathfindAndMoveTo;
@@ -789,7 +792,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         bossModClearActive = PluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
         rsrChangeMode = PluginInterface.GetIpcSubscriber<byte, object>("RotationSolverReborn.ChangeOperatingMode");
         Framework.Update += OnFrameworkUpdate;
+        mainWindow = new MainWindow(this);
         debugWindow = new DebugWindow(this);
+        WindowSystem.AddWindow(mainWindow);
         WindowSystem.AddWindow(debugWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -798,8 +803,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         });
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
-        PluginInterface.UiBuilder.OpenMainUi += OpenDebugWindow;
-        PluginInterface.UiBuilder.OpenConfigUi += OpenDebugWindow;
+        PluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
+        PluginInterface.UiBuilder.OpenConfigUi += OpenMainWindow;
 
         Log.Information("Unbroken Helper loaded.");
     }
@@ -866,19 +871,50 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         var roster = GetMutableStageRoster(board, stage, variant);
         var boardRoster = GetMutableFamiliarRoster(board);
-        if (!boardRoster.Contains(number) || roster.Contains(number) || roster.Count >= 3)
+        var slot = roster.FindIndex(assignedNumber => assignedNumber == 0);
+        if (!boardRoster.Contains(number) || roster.Contains(number) || slot < 0)
         {
             return;
         }
 
-        roster.Add(number);
+        roster[slot] = number;
         SaveConfiguration();
+    }
+
+    internal void SetStageFamiliarSlot(int board, int stage, int slot, int number, string variant = "")
+    {
+        var roster = GetMutableStageRoster(board, stage, variant);
+        var boardRoster = GetMutableFamiliarRoster(board);
+        if (slot is < 0 or >= 3 || (number != 0 && !boardRoster.Contains(number)) ||
+            (number != 0 && roster.Where((_, index) => index != slot).Contains(number)))
+        {
+            return;
+        }
+
+        while (roster.Count < 3)
+        {
+            roster.Add(0);
+        }
+
+        if (slot >= roster.Count)
+        {
+            return;
+        }
+
+        if (roster[slot] != number)
+        {
+            roster[slot] = number;
+            SaveConfiguration();
+        }
     }
 
     internal void RemoveStageFamiliar(int board, int stage, int number, string variant = "")
     {
-        if (GetMutableStageRoster(board, stage, variant).Remove(number))
+        var roster = GetMutableStageRoster(board, stage, variant);
+        var slot = roster.IndexOf(number);
+        if (slot >= 0)
         {
+            roster[slot] = 0;
             SaveConfiguration();
         }
     }
@@ -950,10 +986,90 @@ public sealed unsafe class Plugin : IDalamudPlugin
     internal void RemoveFamiliarFromRoster(int board, int number)
     {
         var roster = GetMutableFamiliarRoster(board);
-        if (roster.Remove(number))
+        var changed = roster.Remove(number);
+        foreach (var stageRoster in GetStageRosters(board))
+        {
+            for (var slot = 0; slot < stageRoster.Count; slot++)
+            {
+                if (stageRoster[slot] == number)
+                {
+                    stageRoster[slot] = 0;
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed)
         {
             SaveConfiguration();
         }
+    }
+
+    internal void ClearFamiliarRoster(int board)
+    {
+        var changed = GetMutableFamiliarRoster(board).Count > 0;
+        GetMutableFamiliarRoster(board).Clear();
+        foreach (var stageRoster in GetStageRosters(board))
+        {
+            for (var slot = 0; slot < stageRoster.Count; slot++)
+            {
+                if (stageRoster[slot] != 0)
+                {
+                    stageRoster[slot] = 0;
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed)
+        {
+            SaveConfiguration();
+        }
+    }
+
+    private IEnumerable<List<int>> GetStageRosters(int board)
+        => board switch
+        {
+            1 => new[] { configuration.Board1StageFamiliarNumbers },
+            2 => new[]
+            {
+                configuration.Board2Stage1FamiliarNumbers,
+                configuration.Board2Stage3BFamiliarNumbers,
+                configuration.Board2Stage5FamiliarNumbers,
+                configuration.Board2Stage7FamiliarNumbers,
+                configuration.Board2Stage10FamiliarNumbers,
+            },
+            3 => new[]
+            {
+                configuration.Board3Stage1FamiliarNumbers,
+                configuration.Board3Stage2FamiliarNumbers,
+                configuration.Board3Stage4AFamiliarNumbers,
+                configuration.Board3Stage4BFamiliarNumbers,
+                configuration.Board3Stage6FamiliarNumbers,
+                configuration.Board3Stage8FamiliarNumbers,
+                configuration.Board3Stage12FamiliarNumbers,
+            },
+            _ => Array.Empty<List<int>>(),
+        };
+
+    internal bool IsBoardConfigurationComplete(int board, bool board3RouteA)
+    {
+        IEnumerable<RouteNode> battleNodes = board switch
+        {
+            1 when board1RouteNode != null => new[] { board1RouteNode },
+            2 => board2RouteNodes.Values,
+            3 => (board3RouteA ? board3ARouteNodes : board3BRouteNodes).Values,
+            _ => Array.Empty<RouteNode>(),
+        };
+
+        var boardRoster = GetMutableFamiliarRoster(board);
+        return boardRoster.Count > 0 && battleNodes
+            .Where(node => node.Kind == RouteNodeKind.Battle)
+            .All(node =>
+            {
+                var stageRoster = GetMutableStageFamiliarRoster(board, node.FamiliarStageNumber, node.Variant);
+                return stageRoster.Count == 3 && stageRoster.All(number => number > 0 && boardRoster.Contains(number));
+            });
     }
 
     private void SaveConfiguration() => PluginInterface.SavePluginConfig(configuration);
@@ -1027,21 +1143,22 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
         ECommonsMain.Dispose();
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
-        PluginInterface.UiBuilder.OpenMainUi -= OpenDebugWindow;
-        PluginInterface.UiBuilder.OpenConfigUi -= OpenDebugWindow;
+        PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
+        PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
         CommandManager.RemoveHandler(CommandName);
 
         WindowSystem.RemoveAllWindows();
+        mainWindow.Dispose();
         debugWindow.Dispose();
     }
 
-    internal void StartFirstBoardEntry() => StartBoardEntry(1, true);
+    internal void StartFirstBoardEntry(bool loop = true) => StartBoardEntry(1, loop);
 
-    internal void StartSecondBoardEntry() => StartBoardEntry(2, true);
+    internal void StartSecondBoardEntry(bool loop = true) => StartBoardEntry(2, loop);
 
-    internal void StartThirdBoardAEntry() => StartBoardEntry(3, true, Board3RouteVariant.A);
+    internal void StartThirdBoardAEntry(bool loop = true) => StartBoardEntry(3, loop, Board3RouteVariant.A);
 
-    internal void StartThirdBoardBEntry() => StartBoardEntry(3, true, Board3RouteVariant.B);
+    internal void StartThirdBoardBEntry(bool loop = true) => StartBoardEntry(3, loop, Board3RouteVariant.B);
 
     private void StartBoardEntry(int board, bool loop, Board3RouteVariant board3Route = Board3RouteVariant.B)
     {
@@ -4454,9 +4571,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private void OnCommand(string command, string args)
-        => OpenDebugWindow();
+        => OpenMainWindow();
 
-    private void OpenDebugWindow()
+    private void OpenMainWindow()
+        => mainWindow.Toggle();
+
+    internal void OpenDebugTools()
         => debugWindow.Toggle();
 
     internal void LogOverview()
@@ -5500,18 +5620,35 @@ public sealed class PluginConfiguration : IPluginConfiguration
         Board1FamiliarNumbers = Board1FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(10).ToList();
         Board2FamiliarNumbers = Board2FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(12).ToList();
         Board3FamiliarNumbers = Board3FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(14).ToList();
-        Board1StageFamiliarNumbers = Board1StageFamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board2Stage1FamiliarNumbers = Board2Stage1FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board2Stage3BFamiliarNumbers = Board2Stage3BFamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board2Stage5FamiliarNumbers = Board2Stage5FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board2Stage7FamiliarNumbers = Board2Stage7FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board2Stage10FamiliarNumbers = Board2Stage10FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage1FamiliarNumbers = Board3Stage1FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage2FamiliarNumbers = Board3Stage2FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage4AFamiliarNumbers = Board3Stage4AFamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage4BFamiliarNumbers = Board3Stage4BFamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage6FamiliarNumbers = Board3Stage6FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage8FamiliarNumbers = Board3Stage8FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
-        Board3Stage12FamiliarNumbers = Board3Stage12FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(3).ToList();
+        Board1StageFamiliarNumbers = NormalizeStageRoster(Board1StageFamiliarNumbers);
+        Board2Stage1FamiliarNumbers = NormalizeStageRoster(Board2Stage1FamiliarNumbers);
+        Board2Stage3BFamiliarNumbers = NormalizeStageRoster(Board2Stage3BFamiliarNumbers);
+        Board2Stage5FamiliarNumbers = NormalizeStageRoster(Board2Stage5FamiliarNumbers);
+        Board2Stage7FamiliarNumbers = NormalizeStageRoster(Board2Stage7FamiliarNumbers);
+        Board2Stage10FamiliarNumbers = NormalizeStageRoster(Board2Stage10FamiliarNumbers);
+        Board3Stage1FamiliarNumbers = NormalizeStageRoster(Board3Stage1FamiliarNumbers);
+        Board3Stage2FamiliarNumbers = NormalizeStageRoster(Board3Stage2FamiliarNumbers);
+        Board3Stage4AFamiliarNumbers = NormalizeStageRoster(Board3Stage4AFamiliarNumbers);
+        Board3Stage4BFamiliarNumbers = NormalizeStageRoster(Board3Stage4BFamiliarNumbers);
+        Board3Stage6FamiliarNumbers = NormalizeStageRoster(Board3Stage6FamiliarNumbers);
+        Board3Stage8FamiliarNumbers = NormalizeStageRoster(Board3Stage8FamiliarNumbers);
+        Board3Stage12FamiliarNumbers = NormalizeStageRoster(Board3Stage12FamiliarNumbers);
+    }
+
+    private static List<int> NormalizeStageRoster(List<int> roster)
+    {
+        var normalized = new List<int>(3);
+        var seen = new HashSet<int>();
+        foreach (var number in roster.Take(3))
+        {
+            normalized.Add(number is >= 1 and <= 50 && seen.Add(number) ? number : 0);
+        }
+
+        while (normalized.Count < 3)
+        {
+            normalized.Add(0);
+        }
+
+        return normalized;
     }
 }
