@@ -90,6 +90,43 @@ public sealed unsafe class Plugin : IDalamudPlugin
             [243141] = (25, true),
             [243142] = (40, true),
         };
+    private static readonly IReadOnlyDictionary<uint, int> BeastGearPriority =
+        new Dictionary<uint, int>
+        {
+            // Type 1: loot and progression.
+            [243057] = 1, // Thief's Knife
+            [243058] = 2, // Thief's Garb
+            [243059] = 3, // Thief's Gloves
+            [243060] = 4, // Thief's Boots
+            [243027] = 5, // Hero's Crown
+            [243007] = 6, // Crown of the Wild
+            [243055] = 7, // Beastly Knife
+
+            // Type 2: combat and survival.
+            [243024] = 8,  // Master Shield
+            [243021] = 9,  // Genji Armor
+            [243049] = 10, // Wind Armor
+            [243019] = 11, // Genji Gloves
+            [243054] = 12, // Beast Mask
+            [243056] = 13, // Beast Earring
+            [243051] = 14, // Mythril Armor
+            [243003] = 15, // Ring of Curing
+
+            // Type 3: speed and damage.
+            [243074] = 16, // Haste Belt
+            [243065] = 17, // Flame Knife
+            [243061] = 18, // Thunder Axe
+            [243050] = 19, // Heavy Axe
+            [243009] = 20, // Power Armlet
+            [243046] = 21, // Ninja Eyepatch
+            [243045] = 22, // Ninja Gloves
+            [243038] = 23, // Flame-wreathed Axe
+            [243039] = 23, // Icebitten Axe
+            [243040] = 23, // Thunderstruck Axe
+            [243041] = 23, // Earthcrushed Axe
+            [243042] = 23, // Deepdrowned Axe
+            [243043] = 23, // Windblown Axe
+        };
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
@@ -233,12 +270,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
         return value.ToString()?.Replace("\r", "\\r").Replace("\n", "\\n") ?? "null";
     }
-    private bool IsRouteDrivenBoard => selectedBoard is 2 or 3;
+    private bool IsRouteDrivenBoard => selectedBoard is 2 or 3 or 4;
     private uint BoardTerritory => selectedBoard switch
     {
         1 => board1Definition?.TerritoryId ?? 1339u,
         2 => board2Definition?.TerritoryId ?? 1340u,
         3 => board3Definition?.TerritoryId ?? 1341u,
+        4 => firstMastersBoardDefinition?.TerritoryId ?? 1342u,
         _ => 0u,
     };
     private Vector3 CurrentStageStartPosition => selectedBoard == 1
@@ -257,10 +295,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly BoardRouteBoard? board1Definition;
     private readonly BoardRouteBoard? board2Definition;
     private readonly BoardRouteBoard? board3Definition;
+    private readonly BoardRouteBoard? firstMastersBoardDefinition;
     private readonly RouteNode? board1RouteNode;
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board2RouteNodes;
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3ARouteNodes;
     private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3BRouteNodes;
+    private readonly IReadOnlyDictionary<RoutePhase, RouteNode> firstMastersRouteNodes;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private readonly ICallGateSubscriber<bool> vnavIsReady;
@@ -289,6 +329,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Rest,
         Treasure,
         Shop,
+        Random,
+    }
+
+    private enum RandomOutcomeKind
+    {
+        None,
+        Battle,
+        Treasure,
     }
 
     private enum Board3RouteVariant
@@ -322,6 +370,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Stage10,
         Shop11,
         Stage12,
+        FirstMastersMove1,
+        FirstMastersMove2B,
+        FirstMastersMove3,
+        FirstMastersMove4A,
+        FirstMastersMove5,
+        FirstMastersMove6B,
+        FirstMastersMove7B,
+        FirstMastersMove8B,
+        FirstMastersMove9,
     }
 
     private sealed class RouteNode
@@ -342,7 +399,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         internal uint[] CombatTargetBaseIds { get; init; } = Array.Empty<uint>();
         internal uint PriorityTargetBaseId { get; init; }
 
-        internal string Key => Variant.Length == 0 ? $"Stage{StageNumber}" : $"Stage{StageNumber}{Variant}";
+        internal string Key => Variant.Length == 0 ? $"Move{StageNumber}" : $"Move{StageNumber}{Variant}";
     }
 
     private RouteNode? CurrentRouteNode
@@ -351,11 +408,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
             : ActiveRouteNodes.GetValueOrDefault(routePhase);
 
     private IReadOnlyDictionary<RoutePhase, RouteNode> ActiveRouteNodes
-        => selectedBoard == 2
-            ? board2RouteNodes
-            : selectedBoard3Route == Board3RouteVariant.A ? board3ARouteNodes : board3BRouteNodes;
+        => selectedBoard switch
+        {
+            2 => board2RouteNodes,
+            3 => selectedBoard3Route == Board3RouteVariant.A ? board3ARouteNodes : board3BRouteNodes,
+            4 => firstMastersRouteNodes,
+            _ => new Dictionary<RoutePhase, RouteNode>(),
+        };
+    private RoutePhase InitialRoutePhase => selectedBoard == 4 ? RoutePhase.FirstMastersMove1 : RoutePhase.Stage1;
 
     private EntryState entryState;
+    private RandomOutcomeKind randomOutcome;
     private DateTime entryStateStarted;
     private DateTime nextEntryAction;
     private bool vnavMoveStarted
@@ -699,6 +762,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         AwaitStage4BTent,
         RestStage4B,
         AwaitStage4BConfirmation,
+        MoveToRandomOutcome,
+        AwaitRandomOutcome,
         MoveToStage6Start,
         MoveToStage10Start,
         AwaitStage6Treasure,
@@ -757,17 +822,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntryState.AwaitStageList => "XBMStageList",
         EntryState.AwaitStageDetail => "XBMStageDetailList",
         EntryState.AwaitFirstBoardTerritory => $"Territory {BoardTerritory}",
-        EntryState.MoveToStageStart => $"VNav {CurrentRouteNode?.Name ?? "stage start"}",
+        EntryState.MoveToStageStart => $"VNav {CurrentRouteNode?.Name ?? "move start"}",
         EntryState.AwaitPreChallengeRoster => "XBMPetParty pre-challenge roster",
         EntryState.AwaitStagePetParty => $"XBMPetParty {CurrentRouteNode?.Name ?? "battle"} roster",
-        EntryState.SelectStagePetParty => $"XBMPetParty stage familiar index {petParty.StageToggleIndex}",
+        EntryState.SelectStagePetParty => $"XBMPetParty move familiar index {petParty.StageToggleIndex}",
         EntryState.OpenFamiliarNotebook => "XBMPetParty callback 5",
         EntryState.AwaitFamiliarNotebook => "XBMMonsterNotebook",
         EntryState.SelectFamiliarNotebook => "XBMMonsterNotebook reconciliation",
         EntryState.AwaitFamiliarRosterUpdate => "XBMPetParty pre-challenge roster update",
         EntryState.AwaitInInstanceStageDetail => $"XBMStageDetailList {CurrentRouteNode?.Name ?? "battle"}",
         EntryState.CommenceInInstanceStage => "XBMStageDetailList callback 8",
-        EntryState.AwaitStageLoaded => "Stage conditions clear",
+        EntryState.AwaitStageLoaded => "Move conditions clear",
         EntryState.PrepareCombat => "Battlehorn 44881",
         EntryState.AwaitBattlehorn => "Battlehorn resolution",
         EntryState.ActivateBossMod => $"BossMod {BossModPresetName}",
@@ -788,20 +853,22 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntryState.AwaitRecoveryMainHud => "XBMContentsMainHUD recovery item",
         EntryState.AwaitRecoveryContextMenu => "ContextMenu recovery item",
         EntryState.AwaitRecoveryHp => "recovery item consumption",
-        EntryState.MoveToStage4APriorityReturn => "VNav Stage 4A priority return",
+        EntryState.MoveToStage4APriorityReturn => "VNav Move 4A priority return",
         EntryState.MoveToStage4BRest => $"VNav {CurrentRouteNode?.Name ?? "rest"}",
         EntryState.AwaitStage4BTent => $"XBMPetParty {CurrentRouteNode?.Name ?? "rest"}",
         EntryState.RestStage4B => $"XBMPetParty {CurrentRouteNode?.Name ?? "rest"} callback 3",
         EntryState.AwaitStage4BConfirmation => $"SelectYesno after {CurrentRouteNode?.Name ?? "rest"}",
+        EntryState.MoveToRandomOutcome => $"VNav {CurrentRouteNode?.Name ?? "random"} spot",
+        EntryState.AwaitRandomOutcome => $"random outcome after {CurrentRouteNode?.Name ?? "random"}",
         EntryState.MoveToStage6Start => $"VNav {CurrentRouteNode?.Name ?? "treasure"} spot",
-        EntryState.MoveToStage10Start => $"VNav {CurrentRouteNode?.Name ?? "stage"} start",
+        EntryState.MoveToStage10Start => $"VNav {CurrentRouteNode?.Name ?? "move"} start",
         EntryState.AwaitStage6Treasure => $"XBMContentsTreasure {CurrentRouteNode?.Name ?? "treasure"}",
         EntryState.SelectStage6Treasure => "XBMContentsTreasure selection",
-        EntryState.AwaitStage6TreasureConfirmation => "SelectYesno after Stage 6 treasure",
+        EntryState.AwaitStage6TreasureConfirmation => "SelectYesno after Move 6 treasure",
         EntryState.AwaitStage8Treasure => $"XBMContentsTreasure {CurrentRouteNode?.Name ?? "treasure"}",
         EntryState.MoveToStage8Start => $"VNav {CurrentRouteNode?.Name ?? "treasure"} spot",
         EntryState.SelectStage8Treasure => "XBMContentsTreasure selection",
-        EntryState.AwaitStage8TreasureConfirmation => "SelectYesno after Stage 8 treasure",
+        EntryState.AwaitStage8TreasureConfirmation => "SelectYesno after Move 8 treasure",
         EntryState.MoveToSecondBoardShop => $"VNav {CurrentRouteNode?.Name ?? "shop"}",
         EntryState.AwaitBoardExitTransitionStart => "route exit transition",
         EntryState.AwaitBoardExitTransitionReady => "route map ready",
@@ -828,10 +895,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         board1Definition = routeCatalog.FindBoard("board1");
         board2Definition = routeCatalog.FindBoard("board2");
         board3Definition = routeCatalog.FindBoard("board3");
+        firstMastersBoardDefinition = routeCatalog.FindBoard("first-masters-board");
         board1RouteNode = BuildRouteNode(routeCatalog.FindRoute("board1", "board1-default")?.Nodes.FirstOrDefault());
         board2RouteNodes = BuildRoute(routeCatalog.FindRoute("board2", "board2-b"));
         board3ARouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-a"));
         board3BRouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-b"));
+        firstMastersRouteNodes = BuildRoute(routeCatalog.FindRoute("first-masters-board", "first-masters-default"));
         if (board1RouteNode == null || board2RouteNodes.Count == 0 ||
             board3ARouteNodes.Count == 0 || board3BRouteNodes.Count == 0)
         {
@@ -873,6 +942,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         1 => 10,
         2 => 12,
         3 => 14,
+        4 => 12,
         _ => 0,
     };
 
@@ -997,6 +1067,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             1 => configuration.Board1FamiliarNumbers,
             2 => configuration.Board2FamiliarNumbers,
             3 => configuration.Board3FamiliarNumbers,
+            4 => configuration.FirstMastersBoardFamiliarNumbers,
             _ => new List<int>(),
         };
 
@@ -1021,6 +1092,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 8 => configuration.Board3Stage8FamiliarNumbers,
                 12 => configuration.Board3Stage12FamiliarNumbers,
                 _ => configuration.Board3Stage1FamiliarNumbers,
+            },
+            4 => stage switch
+            {
+                2 => configuration.FirstMastersMove2BFamiliarNumbers,
+                5 => configuration.FirstMastersMove5FamiliarNumbers,
+                7 => configuration.FirstMastersMove7BFamiliarNumbers,
+                9 => configuration.FirstMastersMove9FamiliarNumbers,
+                _ => configuration.FirstMastersMove1FamiliarNumbers,
             },
             _ => new List<int>(),
         };
@@ -1121,6 +1200,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 configuration.Board3Stage8FamiliarNumbers,
                 configuration.Board3Stage12FamiliarNumbers,
             },
+            4 => new[]
+            {
+                configuration.FirstMastersMove1FamiliarNumbers,
+                configuration.FirstMastersMove2BFamiliarNumbers,
+                configuration.FirstMastersMove5FamiliarNumbers,
+                configuration.FirstMastersMove7BFamiliarNumbers,
+                configuration.FirstMastersMove9FamiliarNumbers,
+            },
             _ => Array.Empty<List<int>>(),
         };
 
@@ -1131,12 +1218,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
             1 when board1RouteNode != null => new[] { board1RouteNode },
             2 => board2RouteNodes.Values,
             3 => (board3RouteA ? board3ARouteNodes : board3BRouteNodes).Values,
+            4 => firstMastersRouteNodes.Values,
             _ => Array.Empty<RouteNode>(),
         };
 
         var boardRoster = GetMutableFamiliarRoster(board);
-        return boardRoster.Count > 0 && battleNodes
-            .Where(node => node.Kind == RouteNodeKind.Battle)
+        var battleNodeList = battleNodes.Where(node => node.Kind == RouteNodeKind.Battle ||
+            (node.Kind == RouteNodeKind.Random && node.FamiliarStageNumber > 0)).ToList();
+        return boardRoster.Count > 0 && battleNodeList.Count > 0 && battleNodeList
             .All(node =>
             {
                 var stageRoster = GetMutableStageFamiliarRoster(board, node.FamiliarStageNumber, node.Variant);
@@ -1151,6 +1240,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             1 => new Vector2(configuration.MainWindowBoard1Width, configuration.MainWindowBoard1Height),
             2 => new Vector2(configuration.MainWindowBoard2Width, configuration.MainWindowBoard2Height),
             3 => new Vector2(configuration.MainWindowBoard3Width, configuration.MainWindowBoard3Height),
+            4 => new Vector2(configuration.MainWindowFirstMastersWidth, configuration.MainWindowFirstMastersHeight),
             _ => new Vector2(820f, 680f),
         };
 
@@ -1175,6 +1265,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             case 3:
                 configuration.MainWindowBoard3Width = width;
                 configuration.MainWindowBoard3Height = height;
+                break;
+            case 4:
+                configuration.MainWindowFirstMastersWidth = width;
+                configuration.MainWindowFirstMastersHeight = height;
                 break;
             default:
                 return;
@@ -1272,6 +1366,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     internal void StartThirdBoardBEntry(bool loop = true) => StartBoardEntry(3, loop, Board3RouteVariant.B);
 
+    internal void StartFirstMastersBoardEntry(bool loop = true) => StartBoardEntry(4, loop);
+
     private void StartBoardEntry(int board, bool loop, Board3RouteVariant board3Route = Board3RouteVariant.B)
     {
         if (EntryActive)
@@ -1281,6 +1377,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         selectedBoard = board;
         selectedBoard3Route = board == 3 ? board3Route : Board3RouteVariant.B;
+        if (board == 4 && !IsBoardConfigurationComplete(4, false))
+        {
+            Log.Warning("[Entry] First Master's Board route or familiar configuration is unavailable; entry automation was not started.");
+            return;
+        }
         if (board == 3 && !HasBoard3FamiliarConfiguration())
         {
             return;
@@ -1318,9 +1419,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var stageRoster = GetMutableStageFamiliarRoster(3, node.FamiliarStageNumber, node.Variant);
             if (stageRoster.Count != 3 || stageRoster.Any(number => !boardRoster.Contains(number)))
             {
-                Log.Warning($"[Entry] Board 3 familiar roster is incomplete stage={node.StageNumber}{node.Variant} " +
+                Log.Warning($"[Entry] Board 3 familiar roster is incomplete move={node.StageNumber}{node.Variant} " +
                     $"configured={string.Join(",", stageRoster)} boardRoster={string.Join(",", boardRoster)}; " +
-                    "configure three valid stage familiars before starting entry automation.");
+                    "configure three valid move familiars before starting entry automation.");
                 return false;
             }
         }
@@ -1551,7 +1652,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             TargetManager.Target = null;
         }
 
-        Log.Information($"[Combat] stage providers reset reason=\"{EscapeLog(reason)}\" target=cleared.");
+        Log.Information($"[Combat] move providers reset reason=\"{EscapeLog(reason)}\" target=cleared.");
     }
 
     private void ResetEntryRuntime(string reason)
@@ -1568,6 +1669,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         TryStopVnav();
         movement.Clear();
         treasure.Clear();
+        randomOutcome = RandomOutcomeKind.None;
         recovery.Clear();
         usedAttackItemIds.Clear();
             failedItemUseIds.Clear();
@@ -1644,7 +1746,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var stateTimeout = entryState is EntryState.AwaitFirstBoardTerritory or EntryState.MoveToStageStart or EntryState.AwaitStageLoaded or EntryState.MoveToStage4APriorityReturn or EntryState.MoveToStage4BRest or EntryState.MoveToStage6Start or EntryState.MoveToStage8Start or EntryState.MoveToStage10Start or EntryState.MoveToSecondBoardShop or EntryState.AwaitBoardExitTransitionStart or EntryState.AwaitBoardExitTransitionReady
+        var stateTimeout = entryState is EntryState.AwaitFirstBoardTerritory or EntryState.MoveToStageStart or EntryState.AwaitStageLoaded or EntryState.MoveToStage4APriorityReturn or EntryState.MoveToStage4BRest or EntryState.MoveToRandomOutcome or EntryState.AwaitRandomOutcome or EntryState.MoveToStage6Start or EntryState.MoveToStage8Start or EntryState.MoveToStage10Start or EntryState.MoveToSecondBoardShop or EntryState.AwaitBoardExitTransitionStart or EntryState.AwaitBoardExitTransitionReady
             ? TimeSpan.FromSeconds(120)
             : entryState == EntryState.Combat
                 ? TimeSpan.FromHours(8)
@@ -1819,6 +1921,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             case EntryState.AwaitStage4BConfirmation:
                 ProcessStage4BConfirmation();
                 break;
+            case EntryState.MoveToRandomOutcome:
+                ProcessMoveToRandomOutcome();
+                break;
+            case EntryState.AwaitRandomOutcome:
+                ProcessRandomOutcomeAvailability();
+                break;
             case EntryState.MoveToStage6Start:
                 ProcessMoveToStage6Start();
                 break;
@@ -1901,12 +2009,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var recoveryWasActive = recovery.Active;
         if (recoveryWasActive)
         {
-            CancelRecovery("mid-stage XBMResult");
+            CancelRecovery("mid-move XBMResult");
         }
 
-        ResetStageCombatProviders("mid-stage XBMResult");
+        ResetStageCombatProviders("mid-move XBMResult");
         AdvanceEntry(EntryState.AwaitXbmResult);
-        Log.Warning($"[Failure] XBMResult detected mid-stage state={failedState}; starting result exit flow.");
+        Log.Warning($"[Failure] XBMResult detected mid-move state={failedState}; starting result exit flow.");
         return true;
     }
 
@@ -2079,7 +2187,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Callback.Fire(addon, true, 1, selectedBoard);
         if (IsRouteDrivenBoard)
         {
-            if (!SetRoute(RoutePhase.Stage1, $"Board {selectedBoard} stage list selected"))
+            if (!SetRoute(InitialRoutePhase, $"Board {selectedBoard} move list selected"))
             {
                 return;
             }
@@ -2168,7 +2276,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             boardMovementClearSince = null;
             petParty.StageToggleIndex = 0;
             AdvanceEntry(EntryState.AwaitStagePetParty);
-            Log.Information("[Entry] stage-start event transition observed; continuing to stage familiar selection.");
+            Log.Information("[Entry] move-start event transition observed; continuing to move familiar selection.");
             return;
         }
 
@@ -2188,7 +2296,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        if (TryMoveToDestination(destination, "stage start", "vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        if (TryMoveToDestination(destination, "move start", "vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             boardMovementReady = true;
             petParty.StageToggleIndex = 0;
@@ -2245,20 +2353,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var records = ReadPetPartyRecords(addon);
         if (records.Count == 0)
         {
-            Log.Debug("[Entry] in-board familiar roster is not populated yet; waiting before stage selection.");
+            Log.Debug("[Entry] in-board familiar roster is not populated yet; waiting before move selection.");
             return;
         }
 
         if (records.Any(record => record.MaximumHp == 0))
         {
-            Log.Debug("[Entry] in-board familiar HP data is not populated yet; waiting before stage selection.");
+            Log.Debug("[Entry] in-board familiar HP data is not populated yet; waiting before move selection.");
             return;
         }
 
         var configured = ConfiguredStageFamiliarNumbers.Distinct().ToList();
         if (configured.Count != 3)
         {
-            FailEntry($"stage-familiar-roster-requires-3:{configured.Count}");
+            FailEntry($"move-familiar-roster-requires-3:{configured.Count}");
             return;
         }
 
@@ -2491,27 +2599,27 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var reason = byNumber.TryGetValue(familiarNumber, out record)
                 ? $"hp={record.CurrentHp}/{record.MaximumHp} hpPercent={record.HealthPercent}"
                 : "reason=not-in-live-roster";
-            Log.Warning($"[Entry] stage pet rejected number={familiarNumber} " +
+            Log.Warning($"[Entry] move pet rejected number={familiarNumber} " +
                 $"name=\"{EscapeLog(record?.Name ?? FamiliarName(familiarNumber))}\" threshold={threshold} {reason}.");
 
             var replacement = fallbackCandidates.FirstOrDefault(candidate => !used.Contains(candidate.FamiliarNumber));
             if (replacement == null)
             {
-                Log.Error($"[Entry] stage pet replacement unavailable rejected={familiarNumber} " +
+                Log.Error($"[Entry] move pet replacement unavailable rejected={familiarNumber} " +
                     $"threshold={threshold} effective={string.Join(",", desired)}.");
-                FailEntry($"stage-familiar-no-healthy-replacement:{familiarNumber}");
+                FailEntry($"move-familiar-no-healthy-replacement:{familiarNumber}");
                 return null;
             }
 
             desired.Add(replacement.FamiliarNumber);
             used.Add(replacement.FamiliarNumber);
-            Log.Information($"[Entry] stage pet replacement rejected={familiarNumber} " +
+            Log.Information($"[Entry] move pet replacement rejected={familiarNumber} " +
                 $"replacement={replacement.FamiliarNumber} name=\"{EscapeLog(replacement.Name)}\" " +
                 $"hp={replacement.CurrentHp}/{replacement.MaximumHp} hpPercent={replacement.HealthPercent} " +
                 $"threshold={threshold}.");
         }
 
-        Log.Information($"[Entry] stage pet selection configured={string.Join(",", configured)} " +
+        Log.Information($"[Entry] move pet selection configured={string.Join(",", configured)} " +
             $"effective={string.Join(",", desired)} threshold={threshold}.");
         return desired;
     }
@@ -2552,13 +2660,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var desired = petParty.StageDesiredNumbers?.ToHashSet();
         if (desired == null)
         {
-            FailEntry("stage-familiar-selection-not-prepared");
+            FailEntry("move-familiar-selection-not-prepared");
             return;
         }
 
         if (desired.Count != 3)
         {
-            FailEntry($"stage-familiar-roster-requires-3:{desired.Count}");
+            FailEntry($"move-familiar-roster-requires-3:{desired.Count}");
             return;
         }
 
@@ -2570,12 +2678,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (!current.SetEquals(desired))
             {
                 petParty.StageSelectionRetryCount++;
-                Log.Warning($"[Entry] stage familiar verification mismatch retry={petParty.StageSelectionRetryCount}/3 " +
+                Log.Warning($"[Entry] move familiar verification mismatch retry={petParty.StageSelectionRetryCount}/3 " +
                     $"current={string.Join(",", current.Order())} desired={string.Join(",", desired.Order())} " +
                     $"queued={string.Join(",", toToggle)}.");
                 if (petParty.StageSelectionRetryCount >= 3)
                 {
-                    FailEntry($"stage-familiar-verification-failed:current={string.Join(",", current.Order())}:desired={string.Join(",", desired.Order())}");
+                    FailEntry($"move-familiar-verification-failed:current={string.Join(",", current.Order())}:desired={string.Join(",", desired.Order())}");
                     return;
                 }
 
@@ -2595,12 +2703,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var rosterIndex = FindPetPartyRosterIndex(addon, familiarNumber);
         if (rosterIndex < 0)
         {
-            FailEntry($"stage-familiar-not-in-board-roster:{familiarNumber}");
+            FailEntry($"move-familiar-not-in-board-roster:{familiarNumber}");
             return;
         }
 
         Callback.Fire(addon, true, 1, (uint)rosterIndex);
-        Log.Information($"[Entry] stage familiar toggle number={familiarNumber} rosterIndex={rosterIndex}.");
+        Log.Information($"[Entry] move familiar toggle number={familiarNumber} rosterIndex={rosterIndex}.");
         petParty.StageToggleIndex++;
         AdvanceEntry(EntryState.SelectStagePetParty);
     }
@@ -2736,7 +2844,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Callback.Fire(addon, true, 8);
         AdvanceEntry(EntryState.AwaitStageLoaded);
         movementConditionsClearSince = null;
-        Log.Information($"[Entry] board={selectedBoard} stage={CurrentRouteNode?.Name ?? "unknown"} commenced; waiting for stage load.");
+        Log.Information($"[Entry] board={selectedBoard} move={CurrentRouteNode?.Name ?? "unknown"} commenced; waiting for move load.");
     }
 
     private void ProcessStageLoaded()
@@ -2755,7 +2863,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (TryBeginItemUse(ItemUseTiming.InStagePreBattle))
         {
-            Log.Information($"[Entry] stage loaded; using in-stage pre-battle items before {CurrentRouteNode?.Name ?? "battle"}.");
+            Log.Information($"[Entry] move loaded; using in-move pre-battle items before {CurrentRouteNode?.Name ?? "battle"}.");
             return;
         }
 
@@ -2915,7 +3023,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 stage4APulletReturnStarted = true;
                 StopMovement();
                 AdvanceEntry(EntryState.MoveToStage4APriorityReturn);
-                Log.Information("[Entry] Stage 4A Pullet wave cleared; returning to priority position.");
+                Log.Information("[Entry] Move 4A Pullet wave cleared; returning to priority position.");
                 return;
             }
         }
@@ -2931,14 +3039,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
             if (CurrentRouteNode?.DirectResultFlow == true)
             {
-                ResetStageCombatProviders("stage targets cleared");
+                ResetStageCombatProviders("move targets cleared");
                 AdvanceEntry(EntryState.AwaitXbmResult);
-                Log.Information("[Combat] Stage 10 targets cleared; waiting for XBMResult.");
+                Log.Information("[Combat] Move 10 targets cleared; waiting for XBMResult.");
                 return;
             }
 
-            ResetStageCombatProviders("stage targets cleared");
-            Log.Information("[Combat] stage targets cleared; beginning stage exit.");
+            ResetStageCombatProviders("move targets cleared");
+            Log.Information("[Combat] move targets cleared; beginning move exit.");
             AdvanceEntry(EntryState.AwaitContentsBotty);
             return;
         }
@@ -3008,9 +3116,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         Callback.Fire(addon, true, 0);
-        if (IsRouteDrivenBoard && CurrentRouteNode?.Kind == RouteNodeKind.Battle)
+        if (IsRouteDrivenBoard && IsCurrentBattleRouteNode())
         {
             var completedNode = CurrentRouteNode;
+            if (completedNode == null)
+            {
+                FailEntry("route-battle-node-missing");
+                return;
+            }
             var nextNode = ActiveRouteNodes.GetValueOrDefault(completedNode.NextPhase);
             if (nextNode == null || !SetNextRouteNode($"{completedNode.Name} complete"))
             {
@@ -3021,7 +3134,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var hp = player == null ? "unavailable" : $"{player.CurrentHp}/{player.MaxHp}";
             if (nextNode.Kind == RouteNodeKind.Rest)
             {
-                Log.Information($"[Recovery] phase=post-stage route={completedNode.Key} hp={hp} decision=defer-to-{nextNode.Key}-rest.");
+                Log.Information($"[Recovery] phase=post-move route={completedNode.Key} hp={hp} decision=defer-to-{nextNode.Key}-rest.");
                 boardMovementTransitionObserved = false;
                 boardMovementClearSince = null;
                 boardMovementReady = false;
@@ -3046,7 +3159,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         else
         {
             AdvanceEntry(EntryState.AwaitSecondBoardMainHud);
-            Log.Information("[Entry] post-stage results confirmed; waiting for contents exit.");
+            Log.Information("[Entry] post-move results confirmed; waiting for contents exit.");
         }
     }
 
@@ -3351,7 +3464,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             if (logCheck)
             {
-                Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-stage")} decision=player-unavailable.");
+                Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-move")} decision=player-unavailable.");
             }
             return false;
         }
@@ -3359,12 +3472,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var hpPercent = (int)((long)player.CurrentHp * 100 / player.MaxHp);
         var thresholdPercent = thresholdOverride ?? 60;
         var targetPercent = targetOverride ?? 90;
-        var next = thresholdPercent == 10 ? "Stage 4B rest" : "next route";
+        var next = thresholdPercent == 10 ? "Move 4B rest" : "next route";
         if (hpPercent > thresholdPercent)
         {
             if (logCheck)
             {
-                Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-stage")} hp={player.CurrentHp}/{player.MaxHp} " +
+                Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-move")} hp={player.CurrentHp}/{player.MaxHp} " +
                     $"percent={hpPercent} threshold={thresholdPercent} next=\"{next}\" decision=skip-above-threshold.");
             }
             return false;
@@ -3372,7 +3485,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (logCheck)
         {
-            Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-stage")} hp={player.CurrentHp}/{player.MaxHp} " +
+            Log.Information($"[Recovery] phase={(isCombatCheck ? "combat" : "post-move")} hp={player.CurrentHp}/{player.MaxHp} " +
                 $"percent={hpPercent} threshold={thresholdPercent} next=\"{next}\" decision=inspect-content.");
         }
         recovery.Continuation = continuation;
@@ -3674,17 +3787,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
             StopMovement();
             stage4APulletReturnStarted = false;
             AdvanceEntry(EntryState.Combat, 0);
-            Log.Information("[Entry] Stage 4A Pullet wave appeared during return; resuming combat.");
+            Log.Information("[Entry] Move 4A Pullet wave appeared during return; resuming combat.");
             return;
         }
 
-        if (TryMoveToDestination(Stage4APriorityReturnPosition, "Stage 4A priority return",
+        if (TryMoveToDestination(Stage4APriorityReturnPosition, "Move 4A priority return",
                 "stage4a-priority-return-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             stage4APulletWaveObserved = false;
             stage4APulletReturnStarted = false;
             AdvanceEntry(EntryState.Combat);
-            Log.Information($"[Entry] Stage 4A priority return reached destination={FormatVector(Stage4APriorityReturnPosition)}.");
+            Log.Information($"[Entry] Move 4A priority return reached destination={FormatVector(Stage4APriorityReturnPosition)}.");
         }
     }
 
@@ -3721,7 +3834,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var destination = CurrentRouteNode?.Position ?? new Vector3(-694.744f, 0f, -33.627f);
-        if (TryMoveToDestination(destination, "Stage 4B rest", "stage4b-rest-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        if (TryMoveToDestination(destination, "Move 4B rest", "stage4b-rest-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             AdvanceEntry(EntryState.AwaitStage4BTent);
         }
@@ -3757,7 +3870,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         Callback.Fire(addon, true, 3);
         AdvanceEntry(EntryState.AwaitStage4BConfirmation);
-        Log.Information("[Entry] Stage 4B rest dispatched callback=3; waiting for confirmation.");
+        Log.Information("[Entry] Move 4B rest dispatched callback=3; waiting for confirmation.");
     }
 
     private void ProcessStage4BConfirmation()
@@ -3774,7 +3887,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         Callback.Fire(addon, true, 0);
-        if (!SetNextRouteNode("Stage 4B rest confirmed"))
+        if (!SetNextRouteNode("Move 4B rest confirmed"))
         {
             return;
         }
@@ -3784,7 +3897,86 @@ public sealed unsafe class Plugin : IDalamudPlugin
         vnavMoveStarted = false;
         movementConditionsClearSince = null;
         AdvanceEntry(EntryState.AwaitBoardExitTransitionStart);
-        Log.Information("[Entry] Stage 4B rest confirmed; waiting for transition to Stage 5.");
+        Log.Information("[Entry] Move 4B rest confirmed; waiting for transition to Move 5.");
+    }
+
+    private void ProcessMoveToRandomOutcome()
+    {
+        if (!RequireRouteNodeKind(RouteNodeKind.Random))
+        {
+            return;
+        }
+
+        if (ClientTerritoryId != BoardTerritory)
+        {
+            FailEntry("territory-changed");
+            return;
+        }
+
+        if (TryBeginRandomOutcome())
+        {
+            return;
+        }
+
+        if (HasEntryTransitionCondition())
+        {
+            movementConditionsClearSince = null;
+            return;
+        }
+
+        movementConditionsClearSince ??= DateTime.UtcNow;
+        if (DateTime.UtcNow - movementConditionsClearSince.Value < TimeSpan.FromSeconds(2))
+        {
+            return;
+        }
+
+        var destination = CurrentRouteNode?.Position ?? Vector3.Zero;
+        if (TryMoveToDestination(destination, CurrentRouteNode?.Name ?? "random outcome",
+                "random-outcome-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        {
+            AdvanceEntry(EntryState.AwaitRandomOutcome);
+        }
+    }
+
+    private void ProcessRandomOutcomeAvailability()
+    {
+        if (!RequireRouteNodeKind(RouteNodeKind.Random))
+        {
+            return;
+        }
+
+        TryBeginRandomOutcome();
+    }
+
+    private bool TryBeginRandomOutcome()
+    {
+        var randomNode = CurrentRouteNode;
+        if (randomNode?.Kind != RouteNodeKind.Random)
+        {
+            return false;
+        }
+
+        if (GetReadyAddon("XBMContentsTreasure") != null)
+        {
+            randomOutcome = RandomOutcomeKind.Treasure;
+            StopMovement();
+            AdvanceEntry(EntryState.AwaitStage6Treasure);
+            Log.Information($"[Entry] {randomNode.Name} random outcome=treasure addon=XBMContentsTreasure.");
+            return true;
+        }
+
+        if (GetReadyAddon("XBMPetParty") != null)
+        {
+            randomOutcome = RandomOutcomeKind.Battle;
+            StopMovement();
+            petParty.StageToggleIndex = 0;
+            AdvanceEntry(EntryState.AwaitStagePetParty);
+            Log.Information($"[Entry] {randomNode.Name} random outcome=battle addon=XBMPetParty " +
+                $"targets={string.Join(",", randomNode.CombatTargetBaseIds)} priority={randomNode.PriorityTargetBaseId}.");
+            return true;
+        }
+
+        return false;
     }
 
     private void ProcessMoveToStage6Start()
@@ -3820,7 +4012,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var destination = CurrentRouteNode?.Position ?? new Vector3(-700.365f, 0f, -50.835f);
-        if (TryMoveToDestination(destination, "Stage 6 treasure", "stage6-treasure-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        if (TryMoveToDestination(destination, "Move 6 treasure", "stage6-treasure-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             AdvanceEntry(EntryState.AwaitStage6Treasure);
         }
@@ -3855,7 +4047,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var destination = CurrentRouteNode?.Position ?? new Vector3(-699.314f, 0f, -83.571f);
-        if (TryMoveToDestination(destination, "Stage 10", "stage10-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        if (TryMoveToDestination(destination, "Move 10", "stage10-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             petParty.StageToggleIndex = 0;
             AdvanceEntry(EntryState.AwaitStagePetParty);
@@ -3965,7 +4157,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         AdvanceEntry(confirmationState);
         Log.Information($"[Entry] {TreasureRouteName()} selection={treasure.CompletedSelections + 1}/{treasure.RequiredSelections} " +
             $"option={optionIndex} itemId={treasure.SelectedItemId} name=\"{EscapeLog(selected?.Title ?? "unknown")}\" " +
-            $"reason={(selected != null && RecoveryItems.ContainsKey(selected.ItemId) ? "healing-priority" : "default-fallback")}; " +
+            $"reason={GetTreasureSelectionReason(selected)} gearRank={GetTreasureGearRank(selected)}; " +
             "waiting up to 2 seconds for confirmation.");
     }
 
@@ -4088,8 +4280,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private string TreasureRouteName()
-        => CurrentRouteNode?.Kind == RouteNodeKind.Treasure
-            ? CurrentRouteNode.Name
+        => IsCurrentTreasureRouteNode()
+            ? CurrentRouteNode?.Name ?? "Unexpected treasure"
             : "Unexpected treasure";
 
     private void CompleteTreasure()
@@ -4099,7 +4291,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var nextNode = currentNode == null ? null : ActiveRouteNodes.GetValueOrDefault(currentNode.NextPhase);
         treasure.Clear();
         ResetMovement();
-        if (currentNode?.Kind != RouteNodeKind.Treasure || nextNode == null || !SetNextRouteNode($"{currentNode.Name} complete"))
+        if (currentNode == null || !IsCurrentTreasureRouteNode() || nextNode == null ||
+            !SetNextRouteNode($"{currentNode.Name} complete"))
         {
             FailEntry($"unexpected-treasure-route:{route}");
             return;
@@ -4158,7 +4351,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var destination = CurrentRouteNode?.Position ?? new Vector3(-695.762f, 0f, -66.826f);
-        if (TryMoveToDestination(destination, "Stage 8 treasure", "stage8-treasure-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
+        if (TryMoveToDestination(destination, "Move 8 treasure", "stage8-treasure-vnav-unavailable", StageTransitionArrivalRadius) == MovementResult.Arrived)
         {
             AdvanceEntry(EntryState.AwaitStage8Treasure);
         }
@@ -4209,11 +4402,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     preStageItemsHandled = true;
                     if (TryBeginItemUse(ItemUseTiming.BoardPreStage))
                     {
-                        Log.Information($"[Entry] transition ready; using pre-stage items before {node.Name}.");
+                        Log.Information($"[Entry] transition ready; using pre-move items before {node.Name}.");
                         return;
                     }
 
-                    Log.Information($"[Entry] transition ready; no pre-stage items available for {node.Name}.");
+                    Log.Information($"[Entry] transition ready; no pre-move items available for {node.Name}.");
                 }
 
                 boardMovementTransitionObserved = false;
@@ -4223,12 +4416,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 if (node.DirectResultFlow)
                 {
                     AdvanceEntry(EntryState.AwaitStageLoaded);
-                    Log.Information($"[Entry] pre-stage items complete; waiting for {node.Name} map to settle.");
+                    Log.Information($"[Entry] pre-move items complete; waiting for {node.Name} map to settle.");
                     break;
                 }
 
                 AdvanceEntry(EntryState.MoveToStageStart);
-                Log.Information($"[Entry] pre-stage items complete; moving to {node.Name}.");
+                Log.Information($"[Entry] pre-move items complete; moving to {node.Name}.");
                 break;
             case RouteNodeKind.Treasure:
                 boardMovementTransitionObserved = false;
@@ -4244,6 +4437,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 boardMovementReady = false;
                 vnavMoveStarted = false;
                 AdvanceEntry(EntryState.MoveToSecondBoardShop);
+                Log.Information($"[Entry] transition ready; moving to {node.Name}.");
+                break;
+            case RouteNodeKind.Random:
+                boardMovementTransitionObserved = false;
+                boardMovementClearSince = null;
+                boardMovementReady = false;
+                vnavMoveStarted = false;
+                AdvanceEntry(EntryState.MoveToRandomOutcome);
                 Log.Information($"[Entry] transition ready; moving to {node.Name}.");
                 break;
             default:
@@ -4393,29 +4594,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         var currentNode = CurrentRouteNode;
         var nextNode = currentNode == null ? null : ActiveRouteNodes.GetValueOrDefault(currentNode.NextPhase);
-        if (currentNode?.Kind != RouteNodeKind.Shop || nextNode?.Kind != RouteNodeKind.Battle)
+        if (currentNode?.Kind != RouteNodeKind.Shop || nextNode == null)
         {
             FailEntry($"shop-next-node-invalid:{currentNode?.Key ?? "unknown"}");
             return;
         }
 
         Callback.Fire(addon, true, 0);
-        if (nextNode.DirectResultFlow)
-        {
-            if (!SetNextRouteNode($"{currentNode.Name} confirmed"))
-            {
-                return;
-            }
-            boardMovementTransitionObserved = false;
-            boardMovementClearSince = null;
-            boardMovementReady = false;
-            vnavMoveStarted = false;
-            movementConditionsClearSince = null;
-            AdvanceEntry(EntryState.MoveToStage10Start);
-            Log.Information($"[Entry] {currentNode.Name} confirmed; moving to {nextNode.Name} start.");
-            return;
-        }
-
         if (!SetNextRouteNode($"{currentNode.Name} confirmed"))
         {
             return;
@@ -4425,14 +4610,40 @@ public sealed unsafe class Plugin : IDalamudPlugin
         boardMovementReady = false;
         vnavMoveStarted = false;
         movementConditionsClearSince = null;
-        if (TryBeginRecovery(EntryState.MoveToStageStart, 60, 90))
+
+        if (nextNode.DirectResultFlow)
         {
-            Log.Information($"[Entry] {currentNode.Name} confirmed; checking recovery items before {nextNode.Name}.");
+            AdvanceEntry(EntryState.MoveToStage10Start);
+            Log.Information($"[Entry] {currentNode.Name} confirmed; moving to {nextNode.Name} start.");
             return;
         }
 
-        AdvanceEntry(EntryState.MoveToStageStart);
-        Log.Information($"[Entry] {currentNode.Name} confirmed; moving to {nextNode.Name} start.");
+        switch (nextNode.Kind)
+        {
+            case RouteNodeKind.Battle:
+                if (TryBeginRecovery(EntryState.MoveToStageStart, 60, 90))
+                {
+                    Log.Information($"[Entry] {currentNode.Name} confirmed; checking recovery items before {nextNode.Name}.");
+                    return;
+                }
+
+                AdvanceEntry(EntryState.MoveToStageStart);
+                break;
+            case RouteNodeKind.Rest:
+                AdvanceEntry(EntryState.MoveToStage4BRest);
+                break;
+            case RouteNodeKind.Treasure:
+                AdvanceEntry(EntryState.MoveToStage6Start);
+                break;
+            case RouteNodeKind.Random:
+                AdvanceEntry(EntryState.MoveToRandomOutcome);
+                break;
+            default:
+                FailEntry($"shop-next-node-invalid:{nextNode.Key}:{nextNode.Kind}");
+                return;
+        }
+
+        Log.Information($"[Entry] {currentNode.Name} confirmed; moving to {nextNode.Name}.");
     }
 
     private void ProcessSecondBoardMainHudAvailability()
@@ -4683,8 +4894,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             gameObject.BaseId == 19608);
 
     private bool IsCombatTargetBaseId(uint baseId)
-        => CurrentRouteNode?.Kind == RouteNodeKind.Battle &&
-            CurrentRouteNode.CombatTargetBaseIds.Contains(baseId);
+        => IsCurrentBattleRouteNode() &&
+            CurrentRouteNode?.CombatTargetBaseIds.Contains(baseId) == true;
 
     private bool IsBattleNpcPet(Dalamud.Game.ClientState.Objects.Types.IGameObject gameObject)
         => gameObject is IBattleNpc battleNpc &&
@@ -4881,10 +5092,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return SetRoute(current.NextPhase, reason);
     }
 
+    private bool IsCurrentBattleRouteNode()
+        => CurrentRouteNode?.Kind == RouteNodeKind.Battle ||
+            (CurrentRouteNode?.Kind == RouteNodeKind.Random && randomOutcome == RandomOutcomeKind.Battle);
+
+    private bool IsCurrentTreasureRouteNode()
+        => CurrentRouteNode?.Kind == RouteNodeKind.Treasure ||
+            (CurrentRouteNode?.Kind == RouteNodeKind.Random && randomOutcome == RandomOutcomeKind.Treasure);
+
     private bool RequireRouteNodeKind(RouteNodeKind expectedKind)
     {
         var node = CurrentRouteNode;
-        if (node?.Kind == expectedKind)
+        if (node?.Kind == expectedKind ||
+            (node?.Kind == RouteNodeKind.Random && expectedKind == RouteNodeKind.Battle && randomOutcome == RandomOutcomeKind.Battle) ||
+            (node?.Kind == RouteNodeKind.Random && expectedKind == RouteNodeKind.Treasure && randomOutcome == RandomOutcomeKind.Treasure))
         {
             return true;
         }
@@ -4917,6 +5138,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Log.Information($"[Route] transition from={current?.Key ?? "None"}/{current?.Kind.ToString() ?? "None"} " +
             $"to={nextNode.Key}/{nextNode.Kind} reason=\"{EscapeLog(reason)}\".");
         routePhase = next;
+        randomOutcome = RandomOutcomeKind.None;
         usedAttackItemIds.Clear();
         failedItemUseIds.Clear();
         recoveryNoUsableItemsRoute = RoutePhase.None;
@@ -5496,7 +5718,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 Log.Information($"[TreasureAnalysis] plan selection={selection}/{selectionCount} option={selected.OptionIndex} " +
                     $"itemId={selected.ItemId} name=\"{EscapeLog(selected.Title)}\" " +
                     $"healPercent={(knownRecovery ? recoveryItem.HealPercent : 0)} ash={(knownRecovery && recoveryItem.IsAsh)} " +
-                    $"reason={(knownRecovery ? "healing-priority" : "default-fallback")}");
+                    $"reason={GetTreasureSelectionReason(selected)} gearRank={GetTreasureGearRank(selected)}");
                 continue;
             }
 
@@ -5578,31 +5800,63 @@ public sealed unsafe class Plugin : IDalamudPlugin
             card.OptionIndex >= 0 && card.RowId != 0 && card.ItemId != 0 &&
             !string.IsNullOrWhiteSpace(card.Title));
 
-    private TreasureCardInfo? SelectTreasureCard(
+    private static TreasureCardInfo? SelectTreasureCard(
         List<TreasureCardInfo> cards,
         HashSet<int> usedOptionIndexes)
-        => cards
-            .Where(card => card.OptionIndex >= 0 && !card.Acquired && !usedOptionIndexes.Contains(card.OptionIndex) &&
-                RecoveryItems.ContainsKey(card.ItemId))
+    {
+        var availableCards = cards
+            .Where(card => card.OptionIndex >= 0 && !card.Acquired &&
+                !usedOptionIndexes.Contains(card.OptionIndex))
+            .ToList();
+
+        return availableCards
+            .Where(card => RecoveryItems.ContainsKey(card.ItemId))
             .OrderByDescending(card => RecoveryItems[card.ItemId].HealPercent)
             .ThenByDescending(card => RecoveryItems[card.ItemId].IsAsh)
             .ThenBy(card => card.OptionIndex)
             .FirstOrDefault()
-            ?? cards.FirstOrDefault(card => card.OptionIndex == 0 && !card.Acquired &&
-                !usedOptionIndexes.Contains(card.OptionIndex))
-            ?? cards.FirstOrDefault(card => card.OptionIndex == 1 && !card.Acquired &&
-                !usedOptionIndexes.Contains(card.OptionIndex))
-            ?? cards.FirstOrDefault(card => card.OptionIndex >= 0 && !card.Acquired &&
-                !usedOptionIndexes.Contains(card.OptionIndex));
+            ?? availableCards
+                .Where(card => BeastGearPriority.ContainsKey(card.ItemId))
+                .OrderBy(card => BeastGearPriority[card.ItemId])
+                .ThenBy(card => card.OptionIndex)
+                .FirstOrDefault()
+            ?? availableCards.FirstOrDefault(card => card.OptionIndex == 0)
+            ?? availableCards.FirstOrDefault(card => card.OptionIndex == 1)
+            ?? availableCards.FirstOrDefault();
+    }
+
+    private static string GetTreasureSelectionReason(TreasureCardInfo? selected)
+    {
+        if (selected == null)
+        {
+            return "no-unused-choice";
+        }
+
+        if (RecoveryItems.ContainsKey(selected.ItemId))
+        {
+            return "healing-priority";
+        }
+
+        return BeastGearPriority.TryGetValue(selected.ItemId, out var rank)
+            ? $"gear-priority rank={rank}"
+            : "default-fallback";
+    }
+
+    private static string GetTreasureGearRank(TreasureCardInfo? selected)
+        => selected != null && BeastGearPriority.TryGetValue(selected.ItemId, out var rank)
+            ? rank.ToString()
+            : "none";
 
     private void LogTreasureChoices(List<TreasureCardInfo> cards)
     {
         foreach (var card in cards)
         {
             var knownRecovery = RecoveryItems.TryGetValue(card.ItemId, out var recoveryItem);
+            var isGear = BeastGearPriority.TryGetValue(card.ItemId, out var gearRank);
             Log.Information($"[Entry] {TreasureRouteName()} possible option={card.OptionIndex} rowId={card.RowId} " +
                 $"itemId={card.ItemId} acquired={card.Acquired} healing={knownRecovery} " +
                 $"healPercent={(knownRecovery ? recoveryItem.HealPercent : 0)} ash={(knownRecovery && recoveryItem.IsAsh)} " +
+                $"gear={isGear} gearRank={(isGear ? gearRank : 0)} " +
                 $"name=\"{EscapeLog(card.Title)}\" effect=\"{EscapeLog(card.Effect.Replace("\r", "\\r").Replace("\n", "\\n"))}\"");
         }
     }
@@ -5967,9 +6221,12 @@ public sealed class PluginConfiguration : IPluginConfiguration
     public float MainWindowBoard2Height { get; set; } = 680f;
     public float MainWindowBoard3Width { get; set; } = 820f;
     public float MainWindowBoard3Height { get; set; } = 680f;
+    public float MainWindowFirstMastersWidth { get; set; } = 820f;
+    public float MainWindowFirstMastersHeight { get; set; } = 680f;
     public List<int> Board1FamiliarNumbers { get; set; } = new();
     public List<int> Board2FamiliarNumbers { get; set; } = new();
     public List<int> Board3FamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersBoardFamiliarNumbers { get; set; } = new();
     public List<int> Board1StageFamiliarNumbers { get; set; } = new();
     public List<int> Board2Stage1FamiliarNumbers { get; set; } = new();
     public List<int> Board2Stage3BFamiliarNumbers { get; set; } = new();
@@ -5983,6 +6240,11 @@ public sealed class PluginConfiguration : IPluginConfiguration
     public List<int> Board3Stage6FamiliarNumbers { get; set; } = new();
     public List<int> Board3Stage8FamiliarNumbers { get; set; } = new();
     public List<int> Board3Stage12FamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersMove1FamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersMove2BFamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersMove5FamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersMove7BFamiliarNumbers { get; set; } = new();
+    public List<int> FirstMastersMove9FamiliarNumbers { get; set; } = new();
 
     public void Normalize()
     {
@@ -5995,9 +6257,12 @@ public sealed class PluginConfiguration : IPluginConfiguration
         MainWindowBoard2Height = NormalizeWindowDimension(MainWindowBoard2Height, 680f, 200f, 2400f);
         MainWindowBoard3Width = NormalizeWindowDimension(MainWindowBoard3Width, 820f, 200f, 4000f);
         MainWindowBoard3Height = NormalizeWindowDimension(MainWindowBoard3Height, 680f, 200f, 2400f);
+        MainWindowFirstMastersWidth = NormalizeWindowDimension(MainWindowFirstMastersWidth, 820f, 200f, 4000f);
+        MainWindowFirstMastersHeight = NormalizeWindowDimension(MainWindowFirstMastersHeight, 680f, 200f, 2400f);
         Board1FamiliarNumbers = Board1FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(10).ToList();
         Board2FamiliarNumbers = Board2FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(12).ToList();
         Board3FamiliarNumbers = Board3FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(14).ToList();
+        FirstMastersBoardFamiliarNumbers = FirstMastersBoardFamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(12).ToList();
         Board1StageFamiliarNumbers = NormalizeStageRoster(Board1StageFamiliarNumbers);
         Board2Stage1FamiliarNumbers = NormalizeStageRoster(Board2Stage1FamiliarNumbers);
         Board2Stage3BFamiliarNumbers = NormalizeStageRoster(Board2Stage3BFamiliarNumbers);
@@ -6011,6 +6276,11 @@ public sealed class PluginConfiguration : IPluginConfiguration
         Board3Stage6FamiliarNumbers = NormalizeStageRoster(Board3Stage6FamiliarNumbers);
         Board3Stage8FamiliarNumbers = NormalizeStageRoster(Board3Stage8FamiliarNumbers);
         Board3Stage12FamiliarNumbers = NormalizeStageRoster(Board3Stage12FamiliarNumbers);
+        FirstMastersMove1FamiliarNumbers = NormalizeStageRoster(FirstMastersMove1FamiliarNumbers);
+        FirstMastersMove2BFamiliarNumbers = NormalizeStageRoster(FirstMastersMove2BFamiliarNumbers);
+        FirstMastersMove5FamiliarNumbers = NormalizeStageRoster(FirstMastersMove5FamiliarNumbers);
+        FirstMastersMove7BFamiliarNumbers = NormalizeStageRoster(FirstMastersMove7BFamiliarNumbers);
+        FirstMastersMove9FamiliarNumbers = NormalizeStageRoster(FirstMastersMove9FamiliarNumbers);
     }
 
     private static float NormalizeWindowDimension(float value, float fallback, float minimum, float maximum)

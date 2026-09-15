@@ -156,47 +156,61 @@ public sealed class DebugWindow : Window, IDisposable
         {
             plugin.SetPetHealthThresholdPercent(petHealthThreshold);
         }
-        ImGui.TextWrapped("Stage selection replaces configured familiars below this HP percentage with the next eligible roster pet.");
+        ImGui.TextWrapped("Move selection replaces configured familiars below this HP percentage with the next eligible roster pet.");
         ImGui.Separator();
-        if (ImGui.CollapsingHeader("Board 1 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("First Board Roster", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawFamiliarRoster(1);
         }
 
-        if (ImGui.CollapsingHeader("Board 2 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("Second Board Roster", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawFamiliarRoster(2);
         }
 
-        if (ImGui.CollapsingHeader("Board 3 Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("Third Board Roster", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawFamiliarRoster(3);
         }
 
+        if (ImGui.CollapsingHeader("First Master's Board Roster", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawFamiliarRoster(4);
+        }
+
         ImGui.Separator();
-        if (ImGui.CollapsingHeader("Board 1 Battle Stages", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("First Board Battle Moves", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            DrawStageRoster(1, 1, "Board 1 Stage 1");
+            DrawStageRoster(1, 1, "First Board Move 1");
         }
 
-        if (ImGui.CollapsingHeader("Board 2 Battle Stages", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("Second Board Battle Moves", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            DrawStageRoster(2, 1, "Board 2 Stage 1 - Manticore");
-            DrawStageRoster(2, 3, "Board 2 Stage 3B - Wyvern");
-            DrawStageRoster(2, 5, "Board 2 Stage 5 - Voidmancer");
-            DrawStageRoster(2, 7, "Board 2 Stage 7 - Tablitaur");
-            DrawStageRoster(2, 10, "Board 2 Stage 10 - Loosefrox / Chewchum");
+            DrawStageRoster(2, 1, "Second Board Move 1 - Manticore");
+            DrawStageRoster(2, 3, "Second Board Move 3B - Wyvern");
+            DrawStageRoster(2, 5, "Second Board Move 5 - Voidmancer");
+            DrawStageRoster(2, 7, "Second Board Move 7 - Tablitaur");
+            DrawStageRoster(2, 10, "Second Board Move 10 - Loosefrox / Chewchum");
         }
 
-        if (ImGui.CollapsingHeader("Board 3 Battle Stages", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("Third Board Battle Moves", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            DrawStageRoster(3, 1, "Board 3 Stage 1 - Cavalier / Bone Bishop");
-            DrawStageRoster(3, 2, "Board 3 Stage 2 - Ymir / Sahagin");
-            DrawStageRoster(3, 4, "Board 3A Stage 4A - Zu", "A");
-            DrawStageRoster(3, 4, "Board 3B Stage 4B - Catoblepas", "B");
-            DrawStageRoster(3, 6, "Board 3 Stage 6 - Lakhamu");
-            DrawStageRoster(3, 8, "Board 3 Stage 8 - Crawling / Shambling / Siren");
-            DrawStageRoster(3, 12, "Board 3 Stage 12 - Guttler");
+            DrawStageRoster(3, 1, "Third Board Move 1 - Cavalier / Bone Bishop");
+            DrawStageRoster(3, 2, "Third Board Move 2 - Ymir / Sahagin");
+            DrawStageRoster(3, 4, "Third Board A Move 4A - Zu", "A");
+            DrawStageRoster(3, 4, "Third Board B Move 4B - Catoblepas", "B");
+            DrawStageRoster(3, 6, "Third Board Move 6 - Lakhamu");
+            DrawStageRoster(3, 8, "Third Board Move 8 - Crawling / Shambling / Siren");
+            DrawStageRoster(3, 12, "Third Board Move 12 - Guttler");
+        }
+
+        if (ImGui.CollapsingHeader("First Master's Board Battle Moves", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawStageRoster(4, 1, "Move 1 - Strix Piece");
+            DrawStageRoster(4, 2, "Move 2B - Random: Queen Hawk / Corpse Flower", "B");
+            DrawStageRoster(4, 5, "Move 5 - Gargoyle Piece");
+            DrawStageRoster(4, 7, "Move 7B - Treant / Slugs", "B");
+            DrawStageRoster(4, 9, "Move 9 - Borgny / Toxic Mass");
         }
     }
 
@@ -459,14 +473,19 @@ public sealed class DebugWindow : Window, IDisposable
                 plugin.StartSecondBoardEntry();
             }
 
-            if (ImGui.Button("Start Third Board 3A Entry"))
+            if (ImGui.Button("Start Third Board A Entry"))
             {
                 plugin.StartThirdBoardAEntry();
             }
 
-            if (ImGui.Button("Start Third Board 3B Entry"))
+            if (ImGui.Button("Start Third Board B Entry"))
             {
                 plugin.StartThirdBoardBEntry();
+            }
+
+            if (ImGui.Button("Start First Master's Board Entry"))
+            {
+                plugin.StartFirstMastersBoardEntry();
             }
         }
 

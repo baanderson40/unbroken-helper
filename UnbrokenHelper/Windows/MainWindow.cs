@@ -74,24 +74,31 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Board 1"))
+        if (ImGui.BeginTabItem("First Board"))
         {
             currentTab = 1;
             DrawBoard(1);
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Board 2"))
+        if (ImGui.BeginTabItem("Second Board"))
         {
             currentTab = 2;
             DrawBoard(2);
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Board 3"))
+        if (ImGui.BeginTabItem("Third Board"))
         {
             currentTab = 3;
             DrawBoard(3);
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("First Master's Board"))
+        {
+            currentTab = 4;
+            DrawBoard(4);
             ImGui.EndTabItem();
         }
 
@@ -153,7 +160,7 @@ public sealed class MainWindow : Window, IDisposable
 
         var board = selectedBoard - 1;
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.Combo("Board", ref board, "Board 1\0Board 2\0Board 3\0"))
+        if (ImGui.Combo("Board", ref board, "First Board\0Second Board\0Third Board\0First Master's Board\0"))
         {
             selectedBoard = board + 1;
         }
@@ -162,7 +169,7 @@ public sealed class MainWindow : Window, IDisposable
         {
             var route = selectedBoard3RouteA ? 0 : 1;
             ImGui.SetNextItemWidth(180f);
-            if (ImGui.Combo("Route", ref route, "Board 3A\0Board 3B\0"))
+            if (ImGui.Combo("Route", ref route, "Third Board A\0Third Board B\0"))
             {
                 selectedBoard3RouteA = route == 0;
             }
@@ -248,13 +255,16 @@ public sealed class MainWindow : Window, IDisposable
             case 3:
                 plugin.StartThirdBoardBEntry(loopRuns);
                 break;
+            case 4:
+                plugin.StartFirstMastersBoardEntry(loopRuns);
+                break;
         }
     }
 
     private void DrawBoard(int board)
     {
-        ImGui.TextUnformatted($"Board {board} Configuration");
-        ImGui.TextWrapped("Set the board roster first, then assign three familiars to each battle stage.");
+        ImGui.TextUnformatted($"{BoardDisplayName(board)} Configuration");
+        ImGui.TextWrapped("Set the board roster first, then assign three familiars to each battle move.");
 
         var threshold = plugin.PetHealthThresholdPercent;
         ImGui.SetNextItemWidth(120f);
@@ -276,13 +286,13 @@ public sealed class MainWindow : Window, IDisposable
         var completeStages = stages.Count(stage =>
             plugin.GetStageFamiliarRoster(board, stage.Stage, stage.Variant).Count(number => number > 0) == 3);
         if (ImGui.CollapsingHeader(
-                $"Stage Assignments ({completeStages}/{stages.Count} complete)##main-stage-section-{board}",
+                $"Move Assignments ({completeStages}/{stages.Count} complete)##main-stage-section-{board}",
                 ImGuiTreeNodeFlags.DefaultOpen))
         {
             if (ImGui.BeginTable($"##main-stage-assignments-{board}", 6,
                     ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
             {
-                ImGui.TableSetupColumn("Stage", ImGuiTableColumnFlags.WidthFixed, 65f);
+                ImGui.TableSetupColumn("Move", ImGuiTableColumnFlags.WidthFixed, 65f);
                 ImGui.TableSetupColumn("Encounter", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("Battlehorn 1", ImGuiTableColumnFlags.WidthFixed, 120f);
                 ImGui.TableSetupColumn("Battlehorn 2", ImGuiTableColumnFlags.WidthFixed, 120f);
@@ -577,15 +587,54 @@ public sealed class MainWindow : Window, IDisposable
         {
             1 => new[]
             {
-                new StageDisplay { Stage = 1, StageLabel = "Stage 1", Encounter = "Board 1 Stage 1" },
+                new StageDisplay { Stage = 1, StageLabel = "Move 1", Encounter = "First Board Move 1" },
             },
             2 => new[]
             {
-                new StageDisplay { Stage = 1, StageLabel = "Stage 1", Encounter = "Manticore" },
-                new StageDisplay { Stage = 3, Variant = "B", StageLabel = "Stage 3B", Encounter = "Wyvern" },
-                new StageDisplay { Stage = 5, StageLabel = "Stage 5", Encounter = "Voidmancer" },
-                new StageDisplay { Stage = 7, StageLabel = "Stage 7", Encounter = "Tablitaur" },
-                new StageDisplay { Stage = 10, StageLabel = "Stage 10", Encounter = "Loosefrox / Chewchum" },
+                new StageDisplay
+                {
+                    Stage = 1,
+                    StageLabel = "Move 1",
+                    Encounter = "Manticore",
+                    MoveDetails = "Move 1\nEnemy 1: Combat 1 type of beast.\nSource: Second Board of the Unbroken wiki.",
+                    EncounterDetails = "Manticore Piece\nWeakness: Wind\nVulnerabilities: Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 3,
+                    Variant = "B",
+                    StageLabel = "Move 3B",
+                    Encounter = "Wyvern",
+                    MoveDetails = "Move 3B - Right Path\nEnemy 2: Combat 1 type of beast.\nSource: Second Board of the Unbroken wiki.",
+                    EncounterDetails = "Wyvern Piece\nWeakness: Lightning\nVulnerabilities: Blind, Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 5,
+                    StageLabel = "Move 5",
+                    Encounter = "Voidmancer / Zombie",
+                    MoveDetails = "Move 5\nEnemy 3: Combat 2 types of beast.\nSource: Second Board of the Unbroken wiki.",
+                    EncounterDetails = "Voidmancer Piece\nWeakness: Earth\nVulnerabilities: None\n\n" +
+                        "Zombie Piece\nWeakness: Ice\nVulnerabilities: Slow, Petrification, Bind, Heavy, Flat damage",
+                },
+                new StageDisplay
+                {
+                    Stage = 7,
+                    StageLabel = "Move 7",
+                    Encounter = "Elder / Younger Tablitaur",
+                    MoveDetails = "Move 7\nElite Enemy 2: Combat 2 types of beast.\nSource: Second Board of the Unbroken wiki.",
+                    EncounterDetails = "Elder Tablitaur Piece\nWeakness: Fire\nVulnerabilities: None\n\n" +
+                        "Younger Tablitaur Piece\nWeakness: Fire\nVulnerabilities: Interruption, Blind, Heavy, Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 10,
+                    StageLabel = "Move 10",
+                    Encounter = "Loosefrox / Chewchum",
+                    MoveDetails = "Move 10\nBoss of the Board: Combat 2 types of beast.\nSource: Second Board of the Unbroken wiki.",
+                    EncounterDetails = "Loosefrox Inkyjots\nWeakness: Blunt\nVulnerabilities: Blind, Poison\n\n" +
+                        "Chewchum Popoto\nWeakness: Water\nVulnerabilities: None",
+                },
             },
             // Battle reference: https://ffxiv.consolegameswiki.com/wiki/Third_Board_of_the_Unbroken
             3 => new[]
@@ -657,6 +706,23 @@ public sealed class MainWindow : Window, IDisposable
                         "Thanatos Piece\nWeakness: Lightning\nVulnerabilities: Slow, Petrification, Stun",
                 },
             },
+            4 => new[]
+            {
+                new StageDisplay { Stage = 1, StageLabel = "Move 1", Encounter = "Strix Piece" },
+                new StageDisplay { Stage = 2, Variant = "B", StageLabel = "Move 2B", Encounter = "Random: Queen Hawk / Corpse Flower" },
+                new StageDisplay { Stage = 5, StageLabel = "Move 5", Encounter = "Gargoyle Piece" },
+                new StageDisplay { Stage = 7, Variant = "B", StageLabel = "Move 7B", Encounter = "Treant / Slugs" },
+                new StageDisplay { Stage = 9, StageLabel = "Move 9", Encounter = "Borgny / Toxic Mass" },
+            },
             _ => Array.Empty<StageDisplay>(),
         };
+
+    private static string BoardDisplayName(int board) => board switch
+    {
+        1 => "First Board",
+        2 => "Second Board",
+        3 => "Third Board",
+        4 => "First Master's Board",
+        _ => $"Board {board}",
+    };
 }
