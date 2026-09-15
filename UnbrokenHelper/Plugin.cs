@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Threading.Tasks;
 using Dalamud.Game.Command;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Configuration;
@@ -11,6 +12,7 @@ using Dalamud.IoC;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
+using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Conditions;
 using ECommons;
@@ -27,6 +29,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 using UnbrokenHelper.Data;
+using UnbrokenHelper.Services;
 using UnbrokenHelper.Windows;
 using Callback = ECommons.Automation.Callback;
 
@@ -267,13 +270,18 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly ICallGateSubscriber<bool> bossModClearActive;
     private readonly ICallGateSubscriber<string, bool, bool> bossModCreatePreset;
     private readonly ICallGateSubscriber<string, bool> bossModDeletePreset;
-    private readonly ICallGateSubscriber<List<string>> bossModGetActiveList;
-    private readonly ICallGateSubscriber<List<string>, bool> bossModSetActiveList;
+    private readonly ICallGateSubscriber<string> bossModGetActivePreset;
     private readonly ICallGateSubscriber<byte, object> rsrChangeMode;
-    private List<string>? bossModPreviousActivePresets;
+    private readonly DalamudPluginToggleHelper bossModToggleHelper;
+    private string? bossModPreviousActivePreset;
+    private bool bossModPreviousActivePresetCaptured;
     private bool bossModPresetSessionStarted;
     private bool bossModPresetCreated;
     private bool bossModPresetActive;
+    private Task? bossModRecoveryTask;
+    private string? bossModRecoveryPluginName;
+    private DateTime bossModRecoveryDeadline = DateTime.MinValue;
+    private DateTime bossModRecoveryNextAttempt = DateTime.MinValue;
 
     private enum RouteNodeKind
     {
@@ -364,6 +372,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private int selectedBoard = 1;
     private Board3RouteVariant selectedBoard3Route = Board3RouteVariant.B;
     private bool loopEntry;
+    private bool stopAfterCurrentLoop;
     private RoutePhase routePhase;
     private RoutePhase recoveryNoUsableItemsRoute;
     private int recoveryNoUsableItemsThreshold;
@@ -718,6 +727,27 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     internal string EntryStateText => entryState.ToString();
     internal bool EntryActive => entryState is not (EntryState.Idle or EntryState.Complete or EntryState.Failed);
+    internal bool LoopAfterCompletion => loopEntry;
+    internal bool StopAfterCurrentLoopPending => stopAfterCurrentLoop;
+
+    internal void RequestStopAfterCurrentLoop()
+    {
+        if (EntryActive && loopEntry)
+        {
+            stopAfterCurrentLoop = true;
+            Log.Information("[Entry] pending stop requested; automation will stop at Central Shroud.");
+        }
+    }
+
+    internal void CancelStopAfterCurrentLoop()
+    {
+        if (EntryActive && loopEntry && stopAfterCurrentLoop)
+        {
+            stopAfterCurrentLoop = false;
+            Log.Information("[Entry] pending stop cancelled; automation will continue looping.");
+        }
+    }
+
     internal string EntryTarget => entryState switch
     {
         EntryState.TargetLauda => "Lauda (BaseId 1059316)",
@@ -814,9 +844,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         bossModClearActive = PluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
         bossModCreatePreset = PluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
         bossModDeletePreset = PluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.Delete");
-        bossModGetActiveList = PluginInterface.GetIpcSubscriber<List<string>>("BossMod.Presets.GetActiveList");
-        bossModSetActiveList = PluginInterface.GetIpcSubscriber<List<string>, bool>("BossMod.Presets.SetActiveList");
+        bossModGetActivePreset = PluginInterface.GetIpcSubscriber<string>("BossMod.Presets.GetActive");
         rsrChangeMode = PluginInterface.GetIpcSubscriber<byte, object>("RotationSolverReborn.ChangeOperatingMode");
+        bossModToggleHelper = new DalamudPluginToggleHelper(PluginInterface, PlayerState, Log);
         Framework.Update += OnFrameworkUpdate;
         mainWindow = new MainWindow(this);
         debugWindow = new DebugWindow(this);
@@ -1114,6 +1144,45 @@ public sealed unsafe class Plugin : IDalamudPlugin
             });
     }
 
+    internal Vector2 GetMainWindowTabSize(int tab)
+        => tab switch
+        {
+            0 => new Vector2(configuration.MainWindowRunWidth, configuration.MainWindowRunHeight),
+            1 => new Vector2(configuration.MainWindowBoard1Width, configuration.MainWindowBoard1Height),
+            2 => new Vector2(configuration.MainWindowBoard2Width, configuration.MainWindowBoard2Height),
+            3 => new Vector2(configuration.MainWindowBoard3Width, configuration.MainWindowBoard3Height),
+            _ => new Vector2(820f, 680f),
+        };
+
+    internal void SaveMainWindowTabSize(int tab, Vector2 size)
+    {
+        var width = Math.Clamp(size.X, 200f, 4000f);
+        var height = Math.Clamp(size.Y, 200f, 2400f);
+        switch (tab)
+        {
+            case 0:
+                configuration.MainWindowRunWidth = width;
+                configuration.MainWindowRunHeight = height;
+                break;
+            case 1:
+                configuration.MainWindowBoard1Width = width;
+                configuration.MainWindowBoard1Height = height;
+                break;
+            case 2:
+                configuration.MainWindowBoard2Width = width;
+                configuration.MainWindowBoard2Height = height;
+                break;
+            case 3:
+                configuration.MainWindowBoard3Width = width;
+                configuration.MainWindowBoard3Height = height;
+                break;
+            default:
+                return;
+        }
+
+        SaveConfiguration();
+    }
+
     private void SaveConfiguration() => PluginInterface.SavePluginConfig(configuration);
 
     private static IReadOnlyDictionary<RoutePhase, RouteNode> BuildRoute(BoardRouteDefinition? route)
@@ -1217,6 +1286,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        stopAfterCurrentLoop = false;
         ReleaseBossModPreset("new entry");
         ResetEntryRuntime("new entry");
         entryState = EntryState.AwaitLaudaReady;
@@ -1290,17 +1360,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return true;
         }
 
-        if (bossModPresetSessionStarted)
-        {
-            return false;
-        }
-
         bossModPresetSessionStarted = true;
         try
         {
-            bossModPreviousActivePresets = bossModGetActiveList.InvokeFunc()
-                .Where(name => !string.Equals(name, BossModPresetName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            if (!bossModPreviousActivePresetCaptured)
+            {
+                bossModPreviousActivePreset = bossModGetActivePreset.InvokeFunc();
+                if (string.Equals(bossModPreviousActivePreset, BossModPresetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    bossModPreviousActivePreset = null;
+                }
+
+                bossModPreviousActivePresetCaptured = true;
+            }
 
             var assemblyDirectory = PluginInterface.AssemblyLocation.DirectoryName;
             if (string.IsNullOrWhiteSpace(assemblyDirectory))
@@ -1326,11 +1398,85 @@ public sealed unsafe class Plugin : IDalamudPlugin
             Log.Information($"[Combat] BossMod preset created or overwritten name={BossModPresetName}.");
             return true;
         }
+        catch (IpcNotReadyError)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Error(ex, $"[Combat] Failed to create BossMod preset name={BossModPresetName}.");
             return false;
         }
+    }
+
+    private bool ProcessBossModRecovery()
+    {
+        if (bossModRecoveryTask == null)
+        {
+            return false;
+        }
+
+        if (!bossModRecoveryTask.IsCompleted)
+        {
+            if (DateTime.UtcNow < bossModRecoveryDeadline)
+            {
+                return true;
+            }
+
+            var recoveryPlugin = bossModRecoveryPluginName ?? "unknown";
+            bossModRecoveryTask = null;
+            bossModRecoveryDeadline = DateTime.MinValue;
+            FailEntry($"bossmod-recovery-timeout:{recoveryPlugin}");
+            return true;
+        }
+
+        var completedTask = bossModRecoveryTask;
+        bossModRecoveryTask = null;
+        bossModRecoveryDeadline = DateTime.MinValue;
+        if (completedTask.IsFaulted || completedTask.IsCanceled)
+        {
+            var reason = completedTask.Exception?.GetBaseException().Message ??
+                (completedTask.IsCanceled ? "canceled" : "unknown");
+            FailEntry($"bossmod-recovery-failed:{reason}");
+            return true;
+        }
+
+        Log.Information($"[Combat] BossMod recovery cycle completed plugin={bossModRecoveryPluginName}; retrying IPC.");
+        bossModRecoveryPluginName = null;
+        return false;
+    }
+
+    private bool TryStartBossModRecovery()
+    {
+        if (bossModRecoveryTask != null)
+        {
+            return true;
+        }
+
+        if (DateTime.UtcNow < bossModRecoveryNextAttempt)
+        {
+            return false;
+        }
+
+        if (!bossModToggleHelper.TryFindLoadedBossMod(out var pluginName, out var findFailure) || pluginName == null)
+        {
+            Log.Warning($"[Combat] BossMod IPC is not ready and recovery could not start: {findFailure ?? "unknown"}.");
+            return false;
+        }
+
+        if (!bossModToggleHelper.TryCycle(pluginName, out var operationTask, out var cycleFailure) || operationTask == null)
+        {
+            Log.Warning($"[Combat] BossMod IPC recovery cycle could not start plugin={pluginName}: {cycleFailure ?? "unknown"}.");
+            bossModRecoveryNextAttempt = DateTime.UtcNow.AddSeconds(30);
+            return false;
+        }
+
+        bossModRecoveryPluginName = pluginName;
+        bossModRecoveryTask = operationTask;
+        bossModRecoveryDeadline = DateTime.UtcNow.AddSeconds(20);
+        bossModRecoveryNextAttempt = DateTime.UtcNow.AddSeconds(30);
+        Log.Warning($"[Combat] BossMod IPC was not ready; cycling plugin={pluginName} to force IPC registration.");
+        return true;
     }
 
     private void ReleaseBossModPreset(string reason)
@@ -1354,13 +1500,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
             bossModPresetActive = false;
         }
 
-        if (bossModPreviousActivePresets != null)
+        if (bossModPreviousActivePresetCaptured)
         {
             try
             {
-                if (!bossModSetActiveList.InvokeFunc(bossModPreviousActivePresets))
+                var restored = bossModPreviousActivePreset == null
+                    ? bossModClearActive.InvokeFunc()
+                    : bossModSetActive.InvokeFunc(bossModPreviousActivePreset);
+                if (!restored)
                 {
-                    Log.Warning("[Combat] BossMod previous active preset list could not be restored.");
+                    Log.Warning("[Combat] BossMod previous active preset could not be restored.");
                 }
             }
             catch (Exception ex)
@@ -1388,7 +1537,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
         }
 
-        bossModPreviousActivePresets = null;
+        bossModPreviousActivePreset = null;
+        bossModPreviousActivePresetCaptured = false;
         bossModPresetSessionStarted = false;
         bossModPresetCreated = false;
     }
@@ -1444,6 +1594,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var previousState = entryState;
         ResetEntryRuntime(reason);
         ReleaseBossModPreset(reason);
+        stopAfterCurrentLoop = false;
         loopEntry = false;
         entryState = nextState;
         Log.Information($"[Entry] terminal state={nextState} previousState={previousState} reason=\"{EscapeLog(reason)}\".");
@@ -2698,6 +2849,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessActivateBossMod()
     {
+        if (ProcessBossModRecovery())
+        {
+            return;
+        }
+
         var target = GetCombatTarget();
         if (target == null)
         {
@@ -2724,6 +2880,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             rsrChangeMode.InvokeAction(3);
             Log.Information("[Combat] RotationSolverReborn mode activated mode=Manual.");
             AdvanceEntry(EntryState.Combat);
+        }
+        catch (IpcNotReadyError ex)
+        {
+            if (TryStartBossModRecovery())
+            {
+                return;
+            }
+
+            FailEntry($"bossmod-ipc-unavailable:{ex.Message}");
         }
         catch (Exception ex)
         {
@@ -4414,7 +4579,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         if (ClientTerritoryId == 148)
         {
-            if (loopEntry)
+            if (loopEntry && !stopAfterCurrentLoop)
             {
                 Log.Information($"[Entry] board={selectedBoard} instance fully exited; restarting automation loop.");
                 EndEntry(EntryState.Idle, "loop restart");
@@ -4422,7 +4587,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             }
             else
             {
-                EndEntry(EntryState.Complete, "board instance fully exited");
+                var reason = stopAfterCurrentLoop
+                    ? "pending stop reached Central Shroud"
+                    : "board instance fully exited";
+                EndEntry(EntryState.Complete, reason);
                 Log.Information("[Entry] board instance fully exited territory=148.");
             }
         }
@@ -5791,6 +5959,14 @@ public sealed class PluginConfiguration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
     public int PetHealthThresholdPercent { get; set; } = 100;
+    public float MainWindowRunWidth { get; set; } = 640f;
+    public float MainWindowRunHeight { get; set; } = 420f;
+    public float MainWindowBoard1Width { get; set; } = 820f;
+    public float MainWindowBoard1Height { get; set; } = 680f;
+    public float MainWindowBoard2Width { get; set; } = 820f;
+    public float MainWindowBoard2Height { get; set; } = 680f;
+    public float MainWindowBoard3Width { get; set; } = 820f;
+    public float MainWindowBoard3Height { get; set; } = 680f;
     public List<int> Board1FamiliarNumbers { get; set; } = new();
     public List<int> Board2FamiliarNumbers { get; set; } = new();
     public List<int> Board3FamiliarNumbers { get; set; } = new();
@@ -5811,6 +5987,14 @@ public sealed class PluginConfiguration : IPluginConfiguration
     public void Normalize()
     {
         PetHealthThresholdPercent = Math.Clamp(PetHealthThresholdPercent, 1, 100);
+        MainWindowRunWidth = NormalizeWindowDimension(MainWindowRunWidth, 640f, 200f, 4000f);
+        MainWindowRunHeight = NormalizeWindowDimension(MainWindowRunHeight, 420f, 200f, 2400f);
+        MainWindowBoard1Width = NormalizeWindowDimension(MainWindowBoard1Width, 820f, 200f, 4000f);
+        MainWindowBoard1Height = NormalizeWindowDimension(MainWindowBoard1Height, 680f, 200f, 2400f);
+        MainWindowBoard2Width = NormalizeWindowDimension(MainWindowBoard2Width, 820f, 200f, 4000f);
+        MainWindowBoard2Height = NormalizeWindowDimension(MainWindowBoard2Height, 680f, 200f, 2400f);
+        MainWindowBoard3Width = NormalizeWindowDimension(MainWindowBoard3Width, 820f, 200f, 4000f);
+        MainWindowBoard3Height = NormalizeWindowDimension(MainWindowBoard3Height, 680f, 200f, 2400f);
         Board1FamiliarNumbers = Board1FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(10).ToList();
         Board2FamiliarNumbers = Board2FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(12).ToList();
         Board3FamiliarNumbers = Board3FamiliarNumbers.Where(number => number is >= 1 and <= 50).Distinct().Take(14).ToList();
@@ -5828,6 +6012,9 @@ public sealed class PluginConfiguration : IPluginConfiguration
         Board3Stage8FamiliarNumbers = NormalizeStageRoster(Board3Stage8FamiliarNumbers);
         Board3Stage12FamiliarNumbers = NormalizeStageRoster(Board3Stage12FamiliarNumbers);
     }
+
+    private static float NormalizeWindowDimension(float value, float fallback, float minimum, float maximum)
+        => float.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
 
     private static List<int> NormalizeStageRoster(List<int> roster)
     {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Dalamud.Interface;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using UnbrokenHelper.Data;
@@ -25,6 +26,11 @@ public sealed class MainWindow : Window, IDisposable
     private int selectedBoard = 1;
     private bool selectedBoard3RouteA;
     private bool loopRuns = true;
+    private int activeTab = -1;
+    private bool tabSizeApplyPending;
+    private Vector2? observedWindowSize;
+    private bool windowSizeSavePending;
+    private DateTime windowSizeChangedAt;
 
     public MainWindow(Plugin plugin)
         : base("Unbroken Helper###UnbrokenHelperMain")
@@ -34,13 +40,23 @@ public sealed class MainWindow : Window, IDisposable
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(640, 500),
+            MinimumSize = new Vector2(200, 200),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Bug,
+            ShowTooltip = () => ImGui.SetTooltip("Open Developer Tools"),
+            Click = _ => plugin.OpenDebugTools(),
+        });
     }
 
     public void Dispose()
     {
+        if (activeTab >= 0 && observedWindowSize.HasValue)
+        {
+            plugin.SaveMainWindowTabSize(activeTab, observedWindowSize.Value);
+        }
     }
 
     public override void Draw()
@@ -50,37 +66,89 @@ public sealed class MainWindow : Window, IDisposable
             return;
         }
 
+        var currentTab = -1;
         if (ImGui.BeginTabItem("Run"))
         {
+            currentTab = 0;
             DrawRun();
             ImGui.EndTabItem();
         }
 
         if (ImGui.BeginTabItem("Board 1"))
         {
+            currentTab = 1;
             DrawBoard(1);
             ImGui.EndTabItem();
         }
 
         if (ImGui.BeginTabItem("Board 2"))
         {
+            currentTab = 2;
             DrawBoard(2);
             ImGui.EndTabItem();
         }
 
         if (ImGui.BeginTabItem("Board 3"))
         {
+            currentTab = 3;
             DrawBoard(3);
             ImGui.EndTabItem();
         }
 
         ImGui.EndTabBar();
+        UpdateTabWindowSize(currentTab);
+    }
+
+    private void UpdateTabWindowSize(int currentTab)
+    {
+        if (currentTab < 0)
+        {
+            return;
+        }
+
+        var currentSize = ImGui.GetWindowSize();
+        if (activeTab != currentTab)
+        {
+            if (activeTab >= 0)
+            {
+                plugin.SaveMainWindowTabSize(activeTab, currentSize);
+            }
+
+            activeTab = currentTab;
+            observedWindowSize = null;
+            windowSizeSavePending = false;
+            Size = plugin.GetMainWindowTabSize(currentTab);
+            SizeCondition = ImGuiCond.Always;
+            tabSizeApplyPending = true;
+            return;
+        }
+
+        if (tabSizeApplyPending)
+        {
+            Size = null;
+            tabSizeApplyPending = false;
+            observedWindowSize = currentSize;
+            return;
+        }
+
+        if (!observedWindowSize.HasValue ||
+            Vector2.DistanceSquared(observedWindowSize.Value, currentSize) > 0.25f)
+        {
+            observedWindowSize = currentSize;
+            windowSizeSavePending = true;
+            windowSizeChangedAt = DateTime.UtcNow;
+        }
+
+        if (windowSizeSavePending && DateTime.UtcNow - windowSizeChangedAt >= TimeSpan.FromMilliseconds(500))
+        {
+            plugin.SaveMainWindowTabSize(activeTab, currentSize);
+            windowSizeSavePending = false;
+        }
     }
 
     private void DrawRun()
     {
         ImGui.TextUnformatted("Crucible Automation");
-        ImGui.TextWrapped("Choose a board, confirm its familiar setup, and start the automation.");
         ImGui.Separator();
 
         var board = selectedBoard - 1;
@@ -101,9 +169,14 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.SameLine();
-        ImGui.Checkbox("Loop after completion", ref loopRuns);
-        ImGui.TextDisabled("Loop is enabled by default and restarts after returning to the Central Shroud.");
+        if (plugin.EntryActive)
+        {
+            loopRuns = plugin.LoopAfterCompletion;
+        }
 
+        ImGui.BeginDisabled(plugin.EntryActive);
+        ImGui.Checkbox("Loop after completion", ref loopRuns);
+        ImGui.EndDisabled();
         ImGui.Separator();
         var configured = plugin.IsBoardConfigurationComplete(selectedBoard, selectedBoard3RouteA);
         if (configured)
@@ -128,28 +201,35 @@ public sealed class MainWindow : Window, IDisposable
         }
         else
         {
+            if (plugin.LoopAfterCompletion)
+            {
+                if (plugin.StopAfterCurrentLoopPending)
+                {
+                    if (ImGui.Button("Cancel pending stop", new Vector2(180f, 32f)))
+                    {
+                        plugin.CancelStopAfterCurrentLoop();
+                    }
+                }
+                else if (ImGui.Button("Stop after current loop", new Vector2(180f, 32f)))
+                {
+                    plugin.RequestStopAfterCurrentLoop();
+                }
+
+                ImGui.SameLine();
+            }
+
             if (ImGui.Button("Stop automation", new Vector2(180f, 32f)))
             {
                 plugin.StopEntry();
             }
         }
 
-        ImGui.SameLine();
-        ImGui.TextUnformatted(plugin.EntryActive ? "Running" : "Stopped");
-
-        ImGui.Separator();
-        ImGui.TextUnformatted("Run status");
-        ImGui.TextUnformatted($"State: {plugin.EntryStateText}");
-        ImGui.TextUnformatted($"Waiting for: {plugin.EntryTarget}");
-        ImGui.TextUnformatted($"Territory: {plugin.ClientTerritoryId}");
-
-        ImGui.Separator();
-        ImGui.TextUnformatted("Need to inspect something?");
-        ImGui.TextWrapped("The original Debug window is still available for addon, object, action, sheet, and route diagnostics.");
-        if (ImGui.Button("Open Developer Tools"))
+        if (plugin.StopAfterCurrentLoopPending)
         {
-            plugin.OpenDebugTools();
+            ImGui.TextDisabled("Pending stop: the current loop will finish before automation stops at Central Shroud.");
         }
+
+        ImGui.Separator();
     }
 
     private void StartSelectedBoard()
