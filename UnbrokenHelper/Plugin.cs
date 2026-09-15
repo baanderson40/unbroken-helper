@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
@@ -31,9 +32,18 @@ using Callback = ECommons.Automation.Callback;
 
 namespace UnbrokenHelper;
 
+internal sealed class NotebookFamiliarEntry
+{
+    internal int UiIndex { get; init; }
+    internal int Number { get; init; }
+    internal uint PetId { get; init; }
+}
+
 public sealed unsafe class Plugin : IDalamudPlugin
 {
     private const string CommandName = "/unbroken";
+    private const string BossModPresetName = "Unbroken";
+    private const string BossModPresetFileName = "UnbrokenBossModPreset.json";
     private const uint SnarlActionId = 46751;
     private const float StageTransitionArrivalRadius = 0.5f;
     private const float CombatPositionArrivalRadius = 1.0f;
@@ -240,6 +250,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         .ToList();
 
     private readonly PluginConfiguration configuration;
+    private readonly FamiliarCombatCatalog familiarCombatCatalog;
     private readonly BoardRouteBoard? board1Definition;
     private readonly BoardRouteBoard? board2Definition;
     private readonly BoardRouteBoard? board3Definition;
@@ -254,7 +265,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly ICallGateSubscriber<object> vnavStop;
     private readonly ICallGateSubscriber<string, bool> bossModSetActive;
     private readonly ICallGateSubscriber<bool> bossModClearActive;
+    private readonly ICallGateSubscriber<string, bool, bool> bossModCreatePreset;
+    private readonly ICallGateSubscriber<string, bool> bossModDeletePreset;
+    private readonly ICallGateSubscriber<List<string>> bossModGetActiveList;
+    private readonly ICallGateSubscriber<List<string>, bool> bossModSetActiveList;
     private readonly ICallGateSubscriber<byte, object> rsrChangeMode;
+    private List<string>? bossModPreviousActivePresets;
+    private bool bossModPresetSessionStarted;
+    private bool bossModPresetCreated;
+    private bool bossModPresetActive;
 
     private enum RouteNodeKind
     {
@@ -587,6 +606,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         internal List<int> PendingFamiliarNumbers { get; } = new();
         internal HashSet<int> FamiliarRemovalNumbers { get; } = new();
         internal HashSet<int> FamiliarAdditionNumbers { get; } = new();
+        internal HashSet<int> NotebookResolvedNumbers { get; } = new();
 
         internal void Clear()
         {
@@ -599,6 +619,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             PendingFamiliarNumbers.Clear();
             FamiliarRemovalNumbers.Clear();
             FamiliarAdditionNumbers.Clear();
+            NotebookResolvedNumbers.Clear();
         }
     }
 
@@ -719,7 +740,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntryState.AwaitStageLoaded => "Stage conditions clear",
         EntryState.PrepareCombat => "Battlehorn 44881",
         EntryState.AwaitBattlehorn => "Battlehorn resolution",
-        EntryState.ActivateBossMod => "BossMod AutoDuty Passive",
+        EntryState.ActivateBossMod => $"BossMod {BossModPresetName}",
         EntryState.PrepareKnight => "Bone Knight action 46751",
         EntryState.AwaitKnightAction => "Bone Knight action resolution",
         EntryState.MoveBehindKnight => "VNav rear position",
@@ -772,6 +793,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         ECommonsMain.Init(PluginInterface, this);
         configuration = PluginInterface.GetPluginConfig() as PluginConfiguration ?? new PluginConfiguration();
         configuration.Normalize();
+        familiarCombatCatalog = new FamiliarCombatCatalogLoader(Log).Load(PluginInterface);
         var routeCatalog = new BoardRouteCatalogLoader(Log).Load(PluginInterface);
         board1Definition = routeCatalog.FindBoard("board1");
         board2Definition = routeCatalog.FindBoard("board2");
@@ -790,6 +812,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
         vnavStop = PluginInterface.GetIpcSubscriber<object>("vnavmesh.Path.Stop");
         bossModSetActive = PluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.SetActive");
         bossModClearActive = PluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
+        bossModCreatePreset = PluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
+        bossModDeletePreset = PluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.Delete");
+        bossModGetActiveList = PluginInterface.GetIpcSubscriber<List<string>>("BossMod.Presets.GetActiveList");
+        bossModSetActiveList = PluginInterface.GetIpcSubscriber<List<string>, bool>("BossMod.Presets.SetActiveList");
         rsrChangeMode = PluginInterface.GetIpcSubscriber<byte, object>("RotationSolverReborn.ChangeOperatingMode");
         Framework.Update += OnFrameworkUpdate;
         mainWindow = new MainWindow(this);
@@ -848,6 +874,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var manager = XBMManager.Instance();
         return manager != null && manager->State == XBMManager.DataState.Received &&
             manager->IsPetUnlocked((uint)number);
+    }
+
+    internal bool TryGetOpenMonsterNotebook(out IReadOnlyList<NotebookFamiliarEntry> entries)
+    {
+        var addon = GetReadyAddon("XBMMonsterNotebook");
+        if (addon == null)
+        {
+            entries = Array.Empty<NotebookFamiliarEntry>();
+            return false;
+        }
+
+        entries = ReadNotebookFamiliarEntries(addon);
+        return true;
     }
 
     internal int PetHealthThresholdPercent => configuration.PetHealthThresholdPercent;
@@ -970,6 +1009,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         46 => "Zu", 47 => "Ice Golem", 48 => "Scorpion", 49 => "Rafflesia", 50 => "Behemoth",
         _ => $"Familiar No. {number}"
     };
+
+    internal FamiliarCombatEntry? GetFamiliarCombatInfo(int number)
+        => familiarCombatCatalog.Find(number);
 
     internal void AddFamiliarToRoster(int board, int number)
     {
@@ -1141,6 +1183,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             ResetEntryRuntime("plugin-disposed");
         }
+        ReleaseBossModPreset("plugin-disposed");
         ECommonsMain.Dispose();
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
@@ -1174,6 +1217,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        ReleaseBossModPreset("new entry");
         ResetEntryRuntime("new entry");
         entryState = EntryState.AwaitLaudaReady;
         loopEntry = loop;
@@ -1225,14 +1269,128 @@ public sealed unsafe class Plugin : IDalamudPlugin
             Log.Debug($"[Combat] RSR reset unavailable: {ex.Message}");
         }
 
+        if (bossModPresetActive)
+        {
+            try
+            {
+                bossModClearActive.InvokeFunc();
+                bossModPresetActive = false;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug($"[Combat] BossMod reset unavailable: {ex.Message}");
+            }
+        }
+    }
+
+    private bool EnsureBossModPreset()
+    {
+        if (bossModPresetCreated)
+        {
+            return true;
+        }
+
+        if (bossModPresetSessionStarted)
+        {
+            return false;
+        }
+
+        bossModPresetSessionStarted = true;
         try
         {
-            bossModClearActive.InvokeFunc();
+            bossModPreviousActivePresets = bossModGetActiveList.InvokeFunc()
+                .Where(name => !string.Equals(name, BossModPresetName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var assemblyDirectory = PluginInterface.AssemblyLocation.DirectoryName;
+            if (string.IsNullOrWhiteSpace(assemblyDirectory))
+            {
+                Log.Error("[Combat] Could not resolve plugin assembly directory for BossMod preset.");
+                return false;
+            }
+
+            var path = Path.Combine(assemblyDirectory, "Data", BossModPresetFileName);
+            if (!File.Exists(path))
+            {
+                Log.Error($"[Combat] BossMod preset file was not found: {path}");
+                return false;
+            }
+
+            if (!bossModCreatePreset.InvokeFunc(File.ReadAllText(path), true))
+            {
+                Log.Error($"[Combat] BossMod rejected preset creation name={BossModPresetName}.");
+                return false;
+            }
+
+            bossModPresetCreated = true;
+            Log.Information($"[Combat] BossMod preset created or overwritten name={BossModPresetName}.");
+            return true;
         }
         catch (Exception ex)
         {
-            Log.Debug($"[Combat] BossMod reset unavailable: {ex.Message}");
+            Log.Error(ex, $"[Combat] Failed to create BossMod preset name={BossModPresetName}.");
+            return false;
         }
+    }
+
+    private void ReleaseBossModPreset(string reason)
+    {
+        if (!bossModPresetSessionStarted)
+        {
+            return;
+        }
+
+        if (bossModPresetActive)
+        {
+            try
+            {
+                bossModClearActive.InvokeFunc();
+            }
+            catch (Exception ex)
+            {
+                Log.Debug($"[Combat] BossMod active preset clear unavailable: {ex.Message}");
+            }
+
+            bossModPresetActive = false;
+        }
+
+        if (bossModPreviousActivePresets != null)
+        {
+            try
+            {
+                if (!bossModSetActiveList.InvokeFunc(bossModPreviousActivePresets))
+                {
+                    Log.Warning("[Combat] BossMod previous active preset list could not be restored.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[Combat] Failed to restore BossMod active preset list.");
+            }
+        }
+
+        if (bossModPresetCreated)
+        {
+            try
+            {
+                if (!bossModDeletePreset.InvokeFunc(BossModPresetName))
+                {
+                    Log.Warning($"[Combat] BossMod preset could not be deleted name={BossModPresetName}.");
+                }
+                else
+                {
+                    Log.Information($"[Combat] BossMod preset deleted name={BossModPresetName} reason={reason}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, $"[Combat] Failed to delete BossMod preset name={BossModPresetName}.");
+            }
+        }
+
+        bossModPreviousActivePresets = null;
+        bossModPresetSessionStarted = false;
+        bossModPresetCreated = false;
     }
 
     private void ResetStageCombatProviders(string reason)
@@ -1285,6 +1443,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         var previousState = entryState;
         ResetEntryRuntime(reason);
+        ReleaseBossModPreset(reason);
         loopEntry = false;
         entryState = nextState;
         Log.Information($"[Entry] terminal state={nextState} previousState={previousState} reason=\"{EscapeLog(reason)}\".");
@@ -1905,10 +2064,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         petParty.FamiliarAdditionNumbers.UnionWith(toAdd);
         petParty.PendingFamiliarNumbers.Clear();
         petParty.PendingFamiliarNumbers.AddRange(toRemove
-            .Where(number => number <= 25)
-            .Concat(toRemove.Where(number => number > 25))
-            .Concat(toAdd.Where(number => number <= 25))
-            .Concat(toAdd.Where(number => number > 25)));
+            .Order()
+            .Concat(toAdd.Order()));
         Log.Information($"[Entry] familiar roster current={string.Join(",", current.Order())} " +
             $"desired={string.Join(",", desired.Order())} remove={string.Join(",", toRemove.Order())} " +
             $"add={string.Join(",", toAdd.Order())}.");
@@ -1978,6 +2135,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         Callback.Fire(addon, true, 5);
         petParty.NotebookPage = -1;
         petParty.NotebookPhase = 0;
+        petParty.NotebookResolvedNumbers.Clear();
         AdvanceEntry(EntryState.AwaitFamiliarNotebook);
         Log.Information($"[Entry] opening familiar notebook for reconciliation pending={string.Join(",", petParty.PendingFamiliarNumbers)}.");
     }
@@ -2009,48 +2167,89 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var available = ReadNotebookFamiliarNumbers(addon);
+        var available = ReadNotebookFamiliarEntries(addon);
+        if (available.Count == 0)
+        {
+            Log.Debug("[Entry] familiar notebook is open but its entries are not populated yet; waiting.");
+            return;
+        }
+
         var phaseNumbers = petParty.NotebookPhase switch
         {
-            0 => petParty.FamiliarRemovalNumbers.Where(number => number <= 25),
-            1 => petParty.FamiliarRemovalNumbers.Where(number => number > 25 && number <= 50),
-            2 => petParty.FamiliarAdditionNumbers.Where(number => number <= 25),
-            _ => petParty.FamiliarAdditionNumbers.Where(number => number > 25 && number <= 50),
+            0 or 1 => petParty.FamiliarRemovalNumbers.Order(),
+            _ => petParty.FamiliarAdditionNumbers.Order(),
         };
         Log.Information($"[Entry] notebook page={petParty.NotebookPage + 1} phase={petParty.NotebookPhase} " +
             $"atkValuesCount={addon->AtkValuesCount} availableCount={available.Count} " +
             $"requested={string.Join(",", petParty.PendingFamiliarNumbers)} " +
-            $"availableNumbers={string.Join(",", available.Select(entry => entry.Number))}.");
+            $"availableNumbers={string.Join(",", available.Select(entry => $"{entry.Number}:{entry.PetId}:ui={entry.UiIndex}"))}.");
 
         var resolvedIndices = new List<(int Number, int UiIndex)>();
         foreach (var number in phaseNumbers)
         {
-            var uiIndex = FindNotebookFamiliarIndex(addon, number);
-            if (uiIndex < 0)
+            var entry = available.FirstOrDefault(candidate => candidate.Number == number);
+            if (entry == null)
             {
-                Log.Warning($"[Entry] familiar-not-found number={number} name=\"{FamiliarName(number)}\" " +
-                    $"available={string.Join(",", available.Select(entry => $"{entry.Number}:{entry.PetId}"))}.");
-                FailEntry($"familiar-not-found:{number}");
-                return;
+                continue;
             }
 
-            resolvedIndices.Add((number, uiIndex));
+            resolvedIndices.Add((number, entry.UiIndex));
         }
 
         foreach (var (number, uiIndex) in resolvedIndices)
         {
             Callback.Fire(addon, true, 7, (uint)uiIndex);
+            petParty.NotebookResolvedNumbers.Add(number);
             Log.Information($"[Entry] familiar No. {number} selected from notebook uiIndex={uiIndex}.");
         }
 
-        if (petParty.NotebookPhase < 3)
+        if (petParty.NotebookPhase == 0)
         {
-            var nextPage = petParty.NotebookPhase is 0 or 2 ? 1u : 0u;
-            Callback.Fire(addon, true, 3, nextPage);
-            petParty.NotebookPage = (int)nextPage;
+            Callback.Fire(addon, true, 3, 1u);
+            petParty.NotebookPage = 1;
             petParty.NotebookPhase++;
             nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
-            Log.Information($"[Entry] notebook phase complete; switched to page {petParty.NotebookPage + 1}.");
+            Log.Information("[Entry] notebook removal scan page 1 complete; switched to page 2.");
+            return;
+        }
+
+        if (petParty.NotebookPhase == 1)
+        {
+            var unresolvedRemovals = petParty.FamiliarRemovalNumbers
+                .Where(number => !petParty.NotebookResolvedNumbers.Contains(number))
+                .Order()
+                .ToList();
+            if (unresolvedRemovals.Count > 0)
+            {
+                FailEntry($"familiar-not-found:{string.Join(",", unresolvedRemovals)}");
+                return;
+            }
+
+            Callback.Fire(addon, true, 3, 0u);
+            petParty.NotebookPage = 0;
+            petParty.NotebookPhase++;
+            nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
+            Log.Information("[Entry] notebook removal scan complete; switched to page 1 for additions.");
+            return;
+        }
+
+        if (petParty.NotebookPhase == 2)
+        {
+            Callback.Fire(addon, true, 3, 1u);
+            petParty.NotebookPage = 1;
+            petParty.NotebookPhase++;
+            nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
+            Log.Information("[Entry] notebook addition scan page 1 complete; switched to page 2.");
+            return;
+        }
+
+        var unresolvedAdditions = petParty.FamiliarAdditionNumbers
+            .Where(number => !petParty.NotebookResolvedNumbers.Contains(number))
+            .Order()
+            .ToList();
+        if (unresolvedAdditions.Count > 0)
+        {
+            FailEntry($"familiar-not-found:{string.Join(",", unresolvedAdditions)}");
             return;
         }
 
@@ -2166,28 +2365,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return desired;
     }
 
-    private static int FindNotebookFamiliarIndex(AtkUnitBase* addon, int familiarNumber)
+    private static List<NotebookFamiliarEntry> ReadNotebookFamiliarEntries(AtkUnitBase* addon)
     {
         const int recordStart = 22;
         const int recordStride = 8;
-        var recordCount = Math.Max(0, (addon->AtkValuesCount - recordStart) / recordStride);
-        for (var index = 0; index < recordCount; index++)
-        {
-            var offset = recordStart + index * recordStride;
-            if (ReadAtkUInt(addon, offset + 2) == familiarNumber)
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private static List<(int Number, uint PetId)> ReadNotebookFamiliarNumbers(AtkUnitBase* addon)
-    {
-        const int recordStart = 22;
-        const int recordStride = 8;
-        var result = new List<(int Number, uint PetId)>();
+        var result = new List<NotebookFamiliarEntry>();
         var recordCount = Math.Max(0, (addon->AtkValuesCount - recordStart) / recordStride);
         for (var index = 0; index < recordCount; index++)
         {
@@ -2196,7 +2378,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             var petId = ReadAtkUInt(addon, offset + 6);
             if (number is >= 1 and <= 50 && petId >= 242001 && petId <= 242050)
             {
-                result.Add(((int)number, petId));
+                result.Add(new NotebookFamiliarEntry
+                {
+                    UiIndex = index,
+                    Number = (int)number,
+                    PetId = petId,
+                });
             }
         }
 
@@ -2520,13 +2707,20 @@ public sealed unsafe class Plugin : IDalamudPlugin
         SetCombatTarget(target);
         try
         {
-            if (!bossModSetActive.InvokeFunc("AutoDuty Passive"))
+            if (!EnsureBossModPreset())
+            {
+                FailEntry("bossmod-preset-creation-failed");
+                return;
+            }
+
+            if (!bossModSetActive.InvokeFunc(BossModPresetName))
             {
                 FailEntry("bossmod-preset-rejected");
                 return;
             }
 
-            Log.Information("[Combat] BossMod preset activated name=AutoDuty Passive.");
+            bossModPresetActive = true;
+            Log.Information($"[Combat] BossMod preset activated name={BossModPresetName}.");
             rsrChangeMode.InvokeAction(3);
             Log.Information("[Combat] RotationSolverReborn mode activated mode=Manual.");
             AdvanceEntry(EntryState.Combat);

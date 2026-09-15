@@ -1,0 +1,17 @@
+{
+  "Name": "Unbroken",
+  "Modules": {
+    "BossMod.Autorotation.MiscAI.StayCloseToTarget": [
+      {
+        "Track": "range",
+        "Option": "3"
+      }
+    ],
+    "BossMod.Autorotation.MiscAI.NormalMovement": [
+      {
+        "Track": "Destination",
+        "Option": "Pathfind"
+      }
+    ]
+  }
+}

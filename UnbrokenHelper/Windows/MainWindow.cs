@@ -4,11 +4,22 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using UnbrokenHelper.Data;
 
 namespace UnbrokenHelper.Windows;
 
 public sealed class MainWindow : Window, IDisposable
 {
+    private sealed class StageDisplay
+    {
+        internal int Stage { get; init; }
+        internal string Variant { get; init; } = string.Empty;
+        internal string StageLabel { get; init; } = string.Empty;
+        internal string Encounter { get; init; } = string.Empty;
+        internal string MoveDetails { get; init; } = string.Empty;
+        internal string EncounterDetails { get; init; } = string.Empty;
+    }
+
     private readonly Plugin plugin;
     private readonly Dictionary<int, int> rosterPages = new();
     private int selectedBoard = 1;
@@ -201,7 +212,7 @@ public sealed class MainWindow : Window, IDisposable
 
                 foreach (var stage in stages)
                 {
-                    DrawStageAssignment(board, stage.Stage, stage.Variant, stage.StageLabel, stage.Encounter);
+                    DrawStageAssignment(board, stage);
                 }
 
                 ImGui.EndTable();
@@ -219,8 +230,14 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TextDisabled("Unlocked familiar data is still loading.");
         }
 
+        if (plugin.TryGetOpenMonsterNotebook(out var notebookEntries))
+        {
+            DrawLiveNotebookRoster(board, roster, notebookEntries);
+            return;
+        }
+
         var page = rosterPages.TryGetValue(board, out var selectedPage) ? selectedPage : 0;
-        ImGui.TextUnformatted("Familiar notebook");
+        ImGui.TextUnformatted("Familiar catalog");
         ImGui.SameLine();
         ImGui.BeginDisabled(page == 0);
         if (ImGui.SmallButton("<##familiar-page-previous"))
@@ -274,6 +291,53 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.EndTable();
     }
 
+    private void DrawLiveNotebookRoster(
+        int board,
+        IReadOnlyList<int> roster,
+        IReadOnlyList<NotebookFamiliarEntry> notebookEntries)
+    {
+        ImGui.TextUnformatted("Live Monster Notebook");
+        ImGui.SameLine();
+        ImGui.TextDisabled("Mirroring the current game page and sort order.");
+        ImGui.SameLine(ImGui.GetWindowContentRegionMax().X - 110f);
+        ImGui.BeginDisabled(plugin.EntryActive || roster.Count == 0);
+        if (ImGui.Button("Clear roster", new Vector2(110f, 0f)))
+        {
+            plugin.ClearFamiliarRoster(board);
+        }
+
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip("Clear this board roster and all Battlehorn assignments.");
+        }
+
+        if (notebookEntries.Count == 0)
+        {
+            ImGui.TextDisabled("The open notebook page has no familiar entries yet.");
+            return;
+        }
+
+        if (!ImGui.BeginTable($"##main-board-live-notebook-{board}", 5,
+                ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.BordersInnerV))
+        {
+            return;
+        }
+
+        for (var index = 0; index < notebookEntries.Count; index++)
+        {
+            if (index % 5 == 0)
+            {
+                ImGui.TableNextRow();
+            }
+
+            ImGui.TableNextColumn();
+            DrawFamiliarNotebookTile(board, notebookEntries[index].Number, roster);
+        }
+
+        ImGui.EndTable();
+    }
+
     private void DrawFamiliarNotebookTile(int board, int number, IReadOnlyList<int> roster)
     {
         var selected = roster.Contains(number);
@@ -305,7 +369,12 @@ public sealed class MainWindow : Window, IDisposable
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
         {
-            if (!unlocked)
+            var combatInfo = plugin.GetFamiliarCombatInfo(number);
+            if (combatInfo != null)
+            {
+                DrawFamiliarCombatTooltip(number, combatInfo);
+            }
+            else if (!unlocked)
             {
                 ImGui.SetTooltip("Familiar is locked or unavailable.");
             }
@@ -331,22 +400,44 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.PopID();
     }
 
-    private void DrawStageAssignment(int board, int stage, string variant, string stageLabel, string encounter)
+    private static void DrawFamiliarCombatTooltip(int number, FamiliarCombatEntry combatInfo)
     {
-        var roster = plugin.GetStageFamiliarRoster(board, stage, variant);
+        ImGui.BeginTooltip();
+        ImGui.TextUnformatted($"No. {number:00} combat information");
+        ImGui.Separator();
+        ImGui.TextUnformatted($"Class: {combatInfo.BeastClass}");
+        ImGui.TextUnformatted($"Auto attack: {combatInfo.AutoAttackType}");
+        DrawActionSummary("Tempered Release", combatInfo.TemperedRelease);
+        DrawActionSummary("Trick", combatInfo.Trick);
+        DrawActionSummary("Borrow", combatInfo.Borrow);
+        ImGui.EndTooltip();
+    }
+
+    private static void DrawActionSummary(string label, FamiliarActionSummary action)
+    {
+        ImGui.Spacing();
+        ImGui.TextUnformatted($"{label}: {action.Name} ({action.TargetType})");
+        ImGui.TextWrapped(action.Description);
+    }
+
+    private void DrawStageAssignment(int board, StageDisplay stage)
+    {
+        var roster = plugin.GetStageFamiliarRoster(board, stage.Stage, stage.Variant);
         var assignedCount = roster.Count(number => number > 0);
         var complete = assignedCount == 3;
-        ImGui.PushID($"main-stage-{board}-{stage}-{variant}");
+        ImGui.PushID($"main-stage-{board}-{stage.Stage}-{stage.Variant}");
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
-        ImGui.TextUnformatted(stageLabel);
+        ImGui.TextUnformatted(stage.StageLabel);
+        DrawHoverTooltip(stage.MoveDetails);
         ImGui.TableNextColumn();
-        ImGui.TextUnformatted(encounter);
+        ImGui.TextUnformatted(stage.Encounter);
+        DrawHoverTooltip(stage.EncounterDetails);
 
         for (var slot = 0; slot < 3; slot++)
         {
             ImGui.TableNextColumn();
-            DrawFamiliarSlot(board, stage, variant, roster, slot);
+            DrawFamiliarSlot(board, stage.Stage, stage.Variant, roster, slot);
         }
 
         ImGui.TableNextColumn();
@@ -355,6 +446,18 @@ public sealed class MainWindow : Window, IDisposable
             : new Vector4(1f, 0.75f, 0.25f, 1f), complete ? "Complete" : $"Missing {3 - assignedCount}");
 
         ImGui.PopID();
+    }
+
+    private static void DrawHoverTooltip(string details)
+    {
+        if (string.IsNullOrWhiteSpace(details) || !ImGui.IsItemHovered())
+        {
+            return;
+        }
+
+        ImGui.BeginTooltip();
+        ImGui.TextUnformatted(details);
+        ImGui.EndTooltip();
     }
 
     private void DrawFamiliarSlot(int board, int stage, string variant, IReadOnlyList<int> roster, int slot)
@@ -389,28 +492,91 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.EndDisabled();
     }
 
-    private static IReadOnlyList<(int Stage, string Variant, string StageLabel, string Encounter)> GetStages(int board)
+    private static IReadOnlyList<StageDisplay> GetStages(int board)
         => board switch
         {
-            1 => new[] { (1, string.Empty, "Stage 1", "Board 1 Stage 1") },
+            1 => new[]
+            {
+                new StageDisplay { Stage = 1, StageLabel = "Stage 1", Encounter = "Board 1 Stage 1" },
+            },
             2 => new[]
             {
-                (1, string.Empty, "Stage 1", "Manticore"),
-                (3, "B", "Stage 3B", "Wyvern"),
-                (5, string.Empty, "Stage 5", "Voidmancer"),
-                (7, string.Empty, "Stage 7", "Tablitaur"),
-                (10, string.Empty, "Stage 10", "Loosefrox / Chewchum"),
+                new StageDisplay { Stage = 1, StageLabel = "Stage 1", Encounter = "Manticore" },
+                new StageDisplay { Stage = 3, Variant = "B", StageLabel = "Stage 3B", Encounter = "Wyvern" },
+                new StageDisplay { Stage = 5, StageLabel = "Stage 5", Encounter = "Voidmancer" },
+                new StageDisplay { Stage = 7, StageLabel = "Stage 7", Encounter = "Tablitaur" },
+                new StageDisplay { Stage = 10, StageLabel = "Stage 10", Encounter = "Loosefrox / Chewchum" },
             },
+            // Battle reference: https://ffxiv.consolegameswiki.com/wiki/Third_Board_of_the_Unbroken
             3 => new[]
             {
-                (1, string.Empty, "Stage 1", "Cavalier / Bone Bishop"),
-                (2, string.Empty, "Stage 2", "Ymir / Sahagin"),
-                (4, "A", "Stage 4A", "Zu"),
-                (4, "B", "Stage 4B", "Catoblepas"),
-                (6, string.Empty, "Stage 6", "Lakhamu"),
-                (8, string.Empty, "Stage 8", "Siren"),
-                (12, string.Empty, "Stage 12", "Guttler"),
+                new StageDisplay
+                {
+                    Stage = 1,
+                    StageLabel = "Move 1",
+                    Encounter = "Cavalier / Bone Bishop",
+                    MoveDetails = "Move 1\nEnemy 1: Combat 2 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Cavalier Piece\nWeakness: Fire\nVulnerabilities: Poison\n\n" +
+                        "Bone Bishop\nWeakness: Blunt\nVulnerabilities: Slow, Petrification, Paralysis, Stun, Bind",
+                },
+                new StageDisplay
+                {
+                    Stage = 2,
+                    StageLabel = "Move 2",
+                    Encounter = "Ymir / Sahagin",
+                    MoveDetails = "Move 2\nEnemy 2: Combat 2 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Ymir Piece\nWeakness: Ice\nVulnerabilities: Stun, Bind, Poison\n\n" +
+                        "Sahagin Piece\nWeakness: Blunt\nVulnerabilities: Interruption, Blind",
+                },
+                new StageDisplay
+                {
+                    Stage = 4,
+                    Variant = "A",
+                    StageLabel = "Move 4A",
+                    Encounter = "Zu",
+                    MoveDetails = "Move 4A - Left Path\nElite enemy: Combat 3 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Zu Piece\nWeakness: Earth\nVulnerabilities: Blind, Poison\n\n" +
+                        "Cockerel Piece\nWeakness: Blunt\nVulnerabilities: Slow, Petrification, Paralysis, Blind, Stun, Sleep, Bind, Heavy, Flat damage, Poison\n\n" +
+                        "Pullet Piece\nWeakness: Blunt\nVulnerabilities: Slow, Petrification, Interruption, Blind, Stun, Sleep, Flat damage, Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 4,
+                    Variant = "B",
+                    StageLabel = "Move 4B",
+                    Encounter = "Catoblepas",
+                    MoveDetails = "Move 4B - Right Path\nEnemy: Combat 1 type of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Catoblepas Piece\nWeakness: Wind\nVulnerabilities: Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 6,
+                    StageLabel = "Move 6",
+                    Encounter = "Lakhamu / Golem",
+                    MoveDetails = "Move 6\nEnemy 4: Combat 2 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Lakhamu Piece\nWeakness: Water\nVulnerabilities: None\n\n" +
+                        "Golem Piece\nWeakness: Water\nVulnerabilities: Slow, Stun, Sleep, Flat damage",
+                },
+                new StageDisplay
+                {
+                    Stage = 8,
+                    StageLabel = "Move 8",
+                    Encounter = "Siren",
+                    MoveDetails = "Move 8\nElite enemy 2: Combat 3 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Siren Piece\nWeakness: Piercing\nVulnerabilities: Poison\n\n" +
+                        "Shambling Piece\nWeakness: Fire\nVulnerabilities: Slow, Paralysis, Bind, Heavy\n\n" +
+                        "Crawling Piece\nWeakness: Fire\nVulnerabilities: None",
+                },
+                new StageDisplay
+                {
+                    Stage = 12,
+                    StageLabel = "Move 12",
+                    Encounter = "Guttler / Thanatos",
+                    MoveDetails = "Move 12\nBoss of the Board: Combat 2 types of beast.\nSource: Third Board of the Unbroken wiki.",
+                    EncounterDetails = "Guttler the Gutter\nWeakness: None\nVulnerabilities: Poison\n\n" +
+                        "Thanatos Piece\nWeakness: Lightning\nVulnerabilities: Slow, Petrification, Stun",
+                },
             },
-            _ => Array.Empty<(int, string, string, string)>(),
+            _ => Array.Empty<StageDisplay>(),
         };
 }
