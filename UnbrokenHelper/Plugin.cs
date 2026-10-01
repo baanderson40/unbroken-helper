@@ -87,6 +87,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private const int ItemUseAttemptTimeoutMilliseconds = 2000;
     private const int ItemUseMaximumAttempts = 3;
     private const int ActionTriggerMovementTimeoutSeconds = 15;
+    private const int NotebookPageSize = 25;
     private static readonly IReadOnlySet<uint> ItemAttackIds = new HashSet<uint>
     {
         243188, 243189, 243190, 243191, 243192, 243193, 243194, 243199,
@@ -793,6 +794,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         internal HashSet<int> FamiliarRemovalNumbers { get; } = new();
         internal HashSet<int> FamiliarAdditionNumbers { get; } = new();
         internal HashSet<int> NotebookResolvedNumbers { get; } = new();
+        internal int NotebookToggleIndex { get; set; }
+        internal DateTime NotebookLastAction { get; set; }
 
         internal void Clear()
         {
@@ -806,6 +809,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
             FamiliarRemovalNumbers.Clear();
             FamiliarAdditionNumbers.Clear();
             NotebookResolvedNumbers.Clear();
+            NotebookToggleIndex = 0;
+            NotebookLastAction = DateTime.MinValue;
         }
     }
 
@@ -893,7 +898,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         AwaitBoardExitTransitionReady,
         AwaitSecondBoardShop,
         CloseSecondBoardShop,
-        AwaitSecondBoardShopClosed,
         AwaitSecondBoardExitConfirmation,
         ConfirmSecondBoardExit,
         AwaitSecondBoardMainHud,
@@ -990,7 +994,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntryState.AwaitBoardExitTransitionReady => "route map ready",
         EntryState.AwaitSecondBoardShop => $"XBMContentsItemShop {CurrentRouteNode?.Name ?? "shop"}",
         EntryState.CloseSecondBoardShop => $"XBMContentsItemShop {CurrentRouteNode?.Name ?? "shop"} callback 0",
-        EntryState.AwaitSecondBoardShopClosed => $"XBMContentsItemShop {CurrentRouteNode?.Name ?? "shop"} closed",
         EntryState.AwaitSecondBoardExitConfirmation => "SelectYesno after shop",
         EntryState.ConfirmSecondBoardExit => "SelectYesno callback 0",
         EntryState.AwaitSecondBoardMainHud => "XBMContentsMainHUD",
@@ -2159,9 +2162,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
             case EntryState.CloseSecondBoardShop:
                 ProcessCloseSecondBoardShop();
                 break;
-            case EntryState.AwaitSecondBoardShopClosed:
-                ProcessSecondBoardShopClosed();
-                break;
             case EntryState.AwaitSecondBoardExitConfirmation:
                 ProcessSecondBoardExitConfirmationAvailability();
                 break;
@@ -2249,7 +2249,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return;
             }
 
-            Callback.Fire(addon, true, 6, 0, new AtkValue { Type = AtkValueType.Undefined });
+            if (!TryFireCallback(addon, "XBMContentsMainHUD", "debug-potion-select", 6, 0,
+                    new AtkValue { Type = AtkValueType.Undefined }))
+            {
+                potionDebugState = PotionDebugState.Idle;
+                return;
+            }
             potionDebugState = PotionDebugState.AwaitContextMenu;
             potionDebugStateStarted = DateTime.UtcNow;
             Log.Information("[Debug] potion-use opened ContextMenu callback=6,0,undefined.");
@@ -2262,16 +2267,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(
-            contextMenu,
-            true,
-            0,
-            0,
-            (uint)0,
-            new AtkValue { Type = AtkValueType.Undefined },
-            new AtkValue { Type = AtkValueType.Undefined });
+        if (!TryGetContextMenuUseIndex(contextMenu, out var potionUseIndex) ||
+            !TryFireCallback(contextMenu, "ContextMenu", "debug-potion-use", 0, potionUseIndex, (uint)0,
+                new AtkValue { Type = AtkValueType.Undefined },
+                new AtkValue { Type = AtkValueType.Undefined }))
+        {
+            potionDebugState = PotionDebugState.Idle;
+            return;
+        }
         potionDebugState = PotionDebugState.Idle;
-        Log.Information("[Debug] potion-use selected ContextMenu use callback=0,0,0,undefined,undefined.");
+        Log.Information($"[Debug] potion-use selected ContextMenu Use entry index={potionUseIndex}.");
     }
 
     private void ProcessLaudaReady()
@@ -2313,7 +2318,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        TargetSystem.Instance()->InteractWithObject(lauda.Struct(), false);
+        var targetSystem = TargetSystem.Instance();
+        var laudaStruct = lauda.Struct();
+        if (targetSystem == null || laudaStruct == null)
+        {
+            FailEntry("lauda-interaction-native-unavailable");
+            return;
+        }
+
+        targetSystem->InteractWithObject(laudaStruct, false);
         AdvanceEntry(EntryState.AwaitSelectIconString);
     }
 
@@ -2327,6 +2340,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 !sheet.TryGetRow(gameObject.BaseId, out var resident))
             {
                 return false;
+            }
+
+            if (gameObject.BaseId == 1059316)
+            {
+                return true;
             }
 
             return string.Equals(resident.Singular.ToString(), "Lauda", StringComparison.OrdinalIgnoreCase) &&
@@ -2350,7 +2368,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 1);
+        if (!TryFireCallback(addon, "SelectIconString", "select-icon-string", 1))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitSelectString);
     }
 
@@ -2362,7 +2383,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryFireCallback(addon, "SelectString", "select-string", 0))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitStageList);
     }
 
@@ -2374,7 +2398,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 1, selectedBoard);
+        if (!TryFireCallback(addon, "XBMStageList", "select-board", 1, selectedBoard))
+        {
+            return;
+        }
         if (IsRouteDrivenBoard)
         {
             if (!SetRoute(InitialRoutePhase, $"Board {selectedBoard} move list selected"))
@@ -2392,6 +2419,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMStageDetailList"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMStageDetailList");
         if (addon == null)
         {
@@ -2403,7 +2435,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 8);
+        if (!TryFireCallback(addon, "XBMStageDetailList", "commence-stage", 8))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitFirstBoardTerritory);
     }
 
@@ -2420,13 +2455,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return false;
         }
 
-        var prompt = addon->AtkValues[0].GetValueAsString();
+        if (!TryGetSelectYesnoPrompt(addon, out var prompt))
+        {
+            return false;
+        }
         if (!prompt.Contains("Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryFireCallback(addon, "SelectYesno", "confirm-board-challenge", 0))
+        {
+            return false;
+        }
         boardChallengeConfirmed = true;
         nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
         Log.Information("[Entry] confirmed low-rank board challenge prompt.");
@@ -2501,6 +2542,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessPreChallengeRosterAvailability()
     {
+        if (!RequireExpectedRouteAddon("XBMPetParty"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMPetParty");
         if (addon == null)
         {
@@ -2535,6 +2581,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private void ProcessStagePetPartyAvailability()
     {
         if (!RequireRouteNodeKind(RouteNodeKind.Battle))
+        {
+            return;
+        }
+
+        if (!RequireExpectedRouteAddon("XBMPetParty"))
         {
             return;
         }
@@ -2580,15 +2631,25 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessOpenFamiliarNotebook()
     {
+        if (!RequireExpectedRouteAddon("XBMPetParty"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMPetParty");
         if (addon == null)
         {
             return;
         }
 
-        Callback.Fire(addon, true, 5);
+        if (!TryFireCallback(addon, "XBMPetParty", "open-familiar-notebook", 5))
+        {
+            return;
+        }
         petParty.NotebookPage = -1;
         petParty.NotebookPhase = 0;
+        petParty.NotebookToggleIndex = 0;
+        petParty.NotebookLastAction = DateTime.MinValue;
         petParty.NotebookResolvedNumbers.Clear();
         AdvanceEntry(EntryState.AwaitFamiliarNotebook);
         Log.Information($"[Entry] opening familiar notebook for reconciliation pending={string.Join(",", petParty.PendingFamiliarNumbers)}.");
@@ -2614,8 +2675,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (petParty.NotebookPage < 0)
         {
-            Callback.Fire(addon, true, 3, (uint)0);
+            if (!TryFireCallback(addon, "XBMMonsterNotebook", "notebook-page-1", 3, (uint)0))
+            {
+                return;
+            }
             petParty.NotebookPage = 0;
+            petParty.NotebookToggleIndex = 0;
+            petParty.NotebookLastAction = DateTime.UtcNow;
             nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
             Log.Information("[Entry] notebook switched to page 1.");
             return;
@@ -2628,40 +2694,51 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        var phaseNumbers = petParty.NotebookPhase switch
+        var phaseNumbers = (petParty.NotebookPhase switch
         {
             0 or 1 => petParty.FamiliarRemovalNumbers.Order(),
             _ => petParty.FamiliarAdditionNumbers.Order(),
-        };
+        }).ToList();
         Log.Information($"[Entry] notebook page={petParty.NotebookPage + 1} phase={petParty.NotebookPhase} " +
             $"atkValuesCount={addon->AtkValuesCount} availableCount={available.Count} " +
             $"requested={string.Join(",", petParty.PendingFamiliarNumbers)} " +
             $"availableNumbers={string.Join(",", available.Select(entry => $"{entry.Number}:{entry.PetId}:ui={entry.UiIndex}"))}.");
 
-        var resolvedIndices = new List<(int Number, int UiIndex)>();
-        foreach (var number in phaseNumbers)
+        if (DateTime.UtcNow - petParty.NotebookLastAction < TimeSpan.FromMilliseconds(500))
         {
-            var entry = available.FirstOrDefault(candidate => candidate.Number == number);
-            if (entry == null)
-            {
-                continue;
-            }
-
-            resolvedIndices.Add((number, entry.UiIndex));
+            return;
         }
 
-        foreach (var (number, uiIndex) in resolvedIndices)
+        if (petParty.NotebookToggleIndex < phaseNumbers.Count)
         {
-            Callback.Fire(addon, true, 7, (uint)uiIndex);
-            petParty.NotebookResolvedNumbers.Add(number);
-            Log.Information($"[Entry] familiar No. {number} selected from notebook uiIndex={uiIndex}.");
+            var number = phaseNumbers[petParty.NotebookToggleIndex++];
+            var entry = available.FirstOrDefault(candidate => candidate.Number == number);
+            if (entry != null)
+            {
+                if (!TryFireCallback(addon, "XBMMonsterNotebook", $"select-familiar-{number}", 7, (uint)entry.UiIndex))
+                {
+                    return;
+                }
+
+                petParty.NotebookResolvedNumbers.Add(number);
+                petParty.NotebookLastAction = DateTime.UtcNow;
+                Log.Information($"[Entry] familiar No. {number} selected from notebook uiIndex={entry.UiIndex}; waiting for roster refresh.");
+                nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
+            }
+
+            return;
         }
 
         if (petParty.NotebookPhase == 0)
         {
-            Callback.Fire(addon, true, 3, 1u);
+            if (!TryFireCallback(addon, "XBMMonsterNotebook", "notebook-page-2-removals", 3, 1u))
+            {
+                return;
+            }
             petParty.NotebookPage = 1;
             petParty.NotebookPhase++;
+            petParty.NotebookToggleIndex = 0;
+            petParty.NotebookLastAction = DateTime.UtcNow;
             nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
             Log.Information("[Entry] notebook removal scan page 1 complete; switched to page 2.");
             return;
@@ -2679,9 +2756,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return;
             }
 
-            Callback.Fire(addon, true, 3, 0u);
+            if (!TryFireCallback(addon, "XBMMonsterNotebook", "notebook-page-1-additions", 3, 0u))
+            {
+                return;
+            }
             petParty.NotebookPage = 0;
             petParty.NotebookPhase++;
+            petParty.NotebookToggleIndex = 0;
+            petParty.NotebookLastAction = DateTime.UtcNow;
             nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
             Log.Information("[Entry] notebook removal scan complete; switched to page 1 for additions.");
             return;
@@ -2689,9 +2771,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (petParty.NotebookPhase == 2)
         {
-            Callback.Fire(addon, true, 3, 1u);
+            if (!TryFireCallback(addon, "XBMMonsterNotebook", "notebook-page-2-additions", 3, 1u))
+            {
+                return;
+            }
             petParty.NotebookPage = 1;
             petParty.NotebookPhase++;
+            petParty.NotebookToggleIndex = 0;
+            petParty.NotebookLastAction = DateTime.UtcNow;
             nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
             Log.Information("[Entry] notebook addition scan page 1 complete; switched to page 2.");
             return;
@@ -2707,7 +2794,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryFireCallback(addon, "XBMMonsterNotebook", "close-familiar-notebook", 0))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitFamiliarRosterUpdate);
         Log.Information("[Entry] all missing familiars selected; closing familiar notebook.");
     }
@@ -2824,7 +2914,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         const int recordStart = 22;
         const int recordStride = 8;
         var result = new List<NotebookFamiliarEntry>();
-        var recordCount = Math.Max(0, (addon->AtkValuesCount - recordStart) / recordStride);
+        var recordCount = Math.Min(NotebookPageSize, Math.Max(0, (addon->AtkValuesCount - recordStart) / recordStride));
         for (var index = 0; index < recordCount; index++)
         {
             var offset = recordStart + index * recordStride;
@@ -2902,41 +2992,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 1, (uint)rosterIndex);
+        if (!TryFireCallback(addon, "XBMPetParty", $"toggle-stage-familiar-{familiarNumber}", 1, (uint)rosterIndex))
+        {
+            return;
+        }
         Log.Information($"[Entry] move familiar toggle number={familiarNumber} rosterIndex={rosterIndex}.");
         petParty.StageToggleIndex++;
+        nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
         AdvanceEntry(EntryState.SelectStagePetParty);
     }
 
     private HashSet<int> ReadStageSelectedFamiliarNumbers(AtkUnitBase* addon)
-    {
-        var result = new HashSet<int>();
-        var list = GetPetPartyList(addon);
-        if (list == null)
-        {
-            return result;
-        }
-
-        var count = Math.Min(Math.Clamp(ReadAtkInt(addon, 5), 0, FamiliarRosterCapacity(selectedBoard)),
-            Math.Clamp(list->GetItemCount(), 0, 50));
-        for (var index = 0; index < count; index++)
-        {
-            var renderer = list->GetItemRenderer(index);
-            var selectionNode = FindRendererNode(renderer, 2);
-            if (renderer == null || selectionNode == null || (selectionNode->DrawFlags & 0x100) != 0)
-            {
-                continue;
-            }
-
-            var id = ReadPetPartyFamiliarId(addon, index);
-            if (id is >= 242001 and <= 242050)
-            {
-                result.Add((int)(id - 242000));
-            }
-        }
-
-        return result;
-    }
+        => ReadPetPartyRecords(addon)
+            .Where(record => record.Selected)
+            .Select(record => record.FamiliarNumber)
+            .ToHashSet();
 
     private static AtkComponentList* GetPetPartyList(AtkUnitBase* addon)
     {
@@ -2961,7 +3031,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var node = addon->UldManager.NodeList[listNodeIndex];
-        return node != null && node->NodeId == 11 ? node : null;
+        return node != null && node->NodeId == 11 && node->GetNodeType() == NodeType.Component ? node : null;
     }
 
     private static AtkResNode* FindRendererNode(AtkComponentListItemRenderer* renderer, uint nodeId)
@@ -2985,7 +3055,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return node;
             }
 
-            if (node->NodeId == 2)
+            if (node->NodeId == 2 && node->GetNodeType() == NodeType.Component)
             {
                 var component = ((AtkComponentNode*)node)->Component;
                 var nested = component == null ? null : FindNodeById(&component->UldManager, nodeId, new HashSet<nint>());
@@ -3019,6 +3089,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMStageDetailList"))
+        {
+            return;
+        }
+
         if (GetReadyAddon("XBMStageDetailList") == null)
         {
             return;
@@ -3030,6 +3105,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessInInstanceCommence()
     {
+        if (!RequireExpectedRouteAddon("XBMStageDetailList"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMStageDetailList");
         if (addon == null)
         {
@@ -3041,7 +3121,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 8);
+        if (!TryFireCallback(addon, "XBMStageDetailList", "commence-stage-in-instance", 8))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitStageLoaded);
         movementConditionsClearSince = null;
         Log.Information($"[Entry] board={selectedBoard} move={CurrentRouteNode?.Name ?? "unknown"} commenced; waiting for move load.");
@@ -3091,7 +3174,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         var callback = targetModeIndex > currentModeIndex ? 5 : 4;
-        Callback.Fire(addon, true, callback);
+        if (!TryFireCallback(addon, "XBMStageDetailList", $"select-crucible-mode-{callback}", callback))
+        {
+            return false;
+        }
         stageDetailModeAttempts++;
         stageDetailModeLastAction = DateTime.UtcNow;
         nextEntryAction = stageDetailModeLastAction.AddMilliseconds(StageDetailModeSelectionDelayMilliseconds);
@@ -3599,7 +3685,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 1);
+        if (!TryFireCallback(addon, "XBMContentsBooty", "close-contents-booty", 1))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitExitConfirmation);
     }
 
@@ -3622,7 +3711,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryGetSelectYesnoPrompt(addon, out var prompt))
+        {
+            return;
+        }
+
+        if (string.Equals(prompt, "Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("[Entry] rejected board-exit callback while challenge prompt is still open.");
+            return;
+        }
+
+        if (!TryFireCallback(addon, "SelectYesno", "confirm-stage-exit", 0))
+        {
+            return;
+        }
         if (IsRouteDrivenBoard && IsCurrentBattleRouteNode())
         {
             var completedNode = CurrentRouteNode;
@@ -3806,7 +3909,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         if (!itemUse.HudSelectionDispatched)
         {
-            Callback.Fire(hud, true, 6, (uint)itemUse.Slot, new AtkValue { Type = AtkValueType.Undefined });
+            if (!TryFireCallback(hud, "XBMContentsMainHUD", $"select-item-{itemUse.ItemId}", 6, (uint)itemUse.Slot,
+                    new AtkValue { Type = AtkValueType.Undefined }))
+            {
+                RetryItemUse("HUD callback rejected");
+                return;
+            }
             itemUse.HudSelectionDispatched = true;
             itemUse.AttemptStarted = DateTime.UtcNow;
             Log.Information($"[Items] itemId={itemUse.ItemId} slot={itemUse.Slot} HUD selection dispatched.");
@@ -3826,14 +3934,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 return;
             }
 
-            Callback.Fire(
-                contextMenu,
-                true,
-                0,
-                0,
-                (uint)0,
-                new AtkValue { Type = AtkValueType.Undefined },
-                new AtkValue { Type = AtkValueType.Undefined });
+            if (!TryGetContextMenuUseIndex(contextMenu, out var useIndex) ||
+                !TryFireCallback(contextMenu, "ContextMenu", $"use-item-{itemUse.ItemId}", 0, useIndex, (uint)0,
+                    new AtkValue { Type = AtkValueType.Undefined },
+                    new AtkValue { Type = AtkValueType.Undefined }))
+            {
+                RetryItemUse("ContextMenu callback rejected");
+                return;
+            }
             itemUse.ContextMenuDispatched = true;
             itemUse.AttemptStarted = DateTime.UtcNow;
             Log.Information($"[Items] itemId={itemUse.ItemId} ContextMenu use callback dispatched.");
@@ -4047,7 +4155,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
             ? attempts + 1
             : 1;
         recovery.AttemptStarted = DateTime.UtcNow;
-        Callback.Fire(addon, true, 6, (uint)slot, new AtkValue { Type = AtkValueType.Undefined });
+        if (!TryFireCallback(addon, "XBMContentsMainHUD", $"select-recovery-item-{itemId}", 6, (uint)slot,
+                new AtkValue { Type = AtkValueType.Undefined }))
+        {
+            FailRecoveryAttempt("HUD callback rejected");
+            return;
+        }
         AdvanceEntry(EntryState.AwaitRecoveryContextMenu, 0);
         Log.Information($"[Recovery] attempt={recovery.Attempt} content-menu requested slot={slot} itemId={itemId} " +
             $"name=\"{EscapeLog(itemName)}\" healPercent={healPercent} hudUsable={usable} " +
@@ -4073,14 +4186,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         Log.Information($"[Recovery] context-menu available=true atkValuesCount={addon->AtkValuesCount}.");
 
-        Callback.Fire(
-            addon,
-            true,
-            0,
-            0,
-            (uint)0,
-            new AtkValue { Type = AtkValueType.Undefined },
-            new AtkValue { Type = AtkValueType.Undefined });
+        if (!TryGetContextMenuUseIndex(addon, out var useIndex) ||
+            !TryFireCallback(addon, "ContextMenu", $"use-recovery-item-{recovery.SelectedItemId}", 0, useIndex, (uint)0,
+                new AtkValue { Type = AtkValueType.Undefined },
+                new AtkValue { Type = AtkValueType.Undefined }))
+        {
+            FailRecoveryAttempt("ContextMenu callback rejected");
+            return;
+        }
         AdvanceEntry(EntryState.AwaitRecoveryHp, 0);
         Log.Information($"[Recovery] attempt={recovery.Attempt} context-menu use callback dispatched; polling item slot.");
     }
@@ -4375,7 +4488,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 3);
+        if (!TryFireCallback(addon, "XBMPetParty", "open-rest", 3))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitStage4BConfirmation);
         Log.Information("[Entry] Move 4B rest dispatched callback=3; waiting for confirmation.");
     }
@@ -4393,7 +4509,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryGetSelectYesnoPrompt(addon, out var prompt))
+        {
+            return;
+        }
+
+        if (prompt.Contains("Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("[Entry] rejected rest confirmation while challenge prompt is open.");
+            return;
+        }
+
+        if (!TryFireCallback(addon, "SelectYesno", "confirm-rest", 0))
+        {
+            return;
+        }
         if (!SetNextRouteNode("Move 4B rest confirmed"))
         {
             return;
@@ -4577,6 +4707,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMContentsTreasure"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMContentsTreasure");
         if (addon == null)
         {
@@ -4628,6 +4763,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMContentsTreasure"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMContentsTreasure");
         if (addon == null)
         {
@@ -4655,7 +4795,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             optionIndex = 0;
         }
 
-        Callback.Fire(addon, true, 2, optionIndex);
+        if (!TryFireCallback(addon, "XBMContentsTreasure", $"select-treasure-{optionIndex}", 2, optionIndex))
+        {
+            return;
+        }
         treasure.UsedOptionIndexes.Add(optionIndex);
         treasure.SelectedOptionIndex = optionIndex;
         treasure.SelectedItemId = selected?.ItemId ?? 0;
@@ -4684,7 +4827,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var selectYesno = GetReadyAddon("SelectYesno");
         if (selectYesno != null)
         {
-            Callback.Fire(selectYesno, true, 0);
+            if (!TryGetSelectYesnoPrompt(selectYesno, out var prompt))
+            {
+                return;
+            }
+
+            if (prompt.Contains("Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warning("[Entry] rejected treasure confirmation while challenge prompt is open.");
+                return;
+            }
+
+            if (!TryFireCallback(selectYesno, "SelectYesno", "confirm-treasure", 0))
+            {
+                return;
+            }
             treasure.CompletedSelections++;
             if (treasure.CompletedSelections < treasure.RequiredSelections)
             {
@@ -4715,7 +4872,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
         if (treasure.Attempt == 1 && elapsed >= TimeSpan.FromSeconds(2))
         {
             var previousOption = treasure.SelectedOptionIndex;
-            Callback.Fire(treasureAddon, true, 2, 1);
+            if (!TryFireCallback(treasureAddon, "XBMContentsTreasure", "select-treasure-fallback-1", 2, 1))
+            {
+                return;
+            }
             treasure.UsedOptionIndexes.Add(1);
             treasure.SelectedOptionIndex = 1;
             treasure.SelectedItemId = ResolveTreasureCards(treasureAddon)
@@ -5027,6 +5187,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMContentsItemShop"))
+        {
+            return;
+        }
+
         if (GetReadyAddon("XBMContentsItemShop") == null)
         {
             return;
@@ -5043,32 +5208,24 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!RequireExpectedRouteAddon("XBMContentsItemShop"))
+        {
+            return;
+        }
+
         var addon = GetReadyAddon("XBMContentsItemShop");
         if (addon == null)
         {
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryFireCallback(addon, "XBMContentsItemShop", "close-item-shop", 0))
+        {
+            return;
+        }
         vnavMoveStarted = false;
         AdvanceEntry(EntryState.AwaitSecondBoardExitConfirmation);
         Log.Information("[Entry] Second Board item shop closed; waiting for exit confirmation.");
-    }
-
-    private void ProcessSecondBoardShopClosed()
-    {
-        if (!RequireRouteNodeKind(RouteNodeKind.Shop))
-        {
-            return;
-        }
-
-        if (GetReadyAddon("XBMContentsItemShop") != null)
-        {
-            return;
-        }
-
-        AdvanceEntry(EntryState.AwaitInstanceLeave);
-        Log.Information("[Entry] Second Board item shop closed; requesting board instance exit.");
     }
 
     private void ProcessSecondBoardExitConfirmationAvailability()
@@ -5107,7 +5264,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryGetSelectYesnoPrompt(addon, out var prompt))
+        {
+            return;
+        }
+
+        if (prompt.Contains("Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("[Entry] rejected shop exit while challenge prompt is open.");
+            return;
+        }
+
+        if (!TryFireCallback(addon, "SelectYesno", "confirm-shop-exit", 0))
+        {
+            return;
+        }
         if (!SetNextRouteNode($"{currentNode.Name} confirmed"))
         {
             return;
@@ -5172,7 +5343,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         ResetCombatProviders();
-        Callback.Fire(addon, true, 3);
+        if (!TryFireCallback(addon, "XBMContentsMainHUD", "close-second-board-hud", 3))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitSecondBoardFinalConfirmation);
         Log.Information("[Entry] requested Second Board contents exit; waiting for final confirmation.");
     }
@@ -5195,7 +5369,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryGetSelectYesnoPrompt(addon, out var prompt))
+        {
+            return;
+        }
+
+        if (prompt.Contains("Proceed to challenge this board?", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("[Entry] rejected final exit while challenge prompt is open.");
+            return;
+        }
+
+        if (!TryFireCallback(addon, "SelectYesno", "confirm-final-exit", 0))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitXbmResult);
         Log.Information("[Entry] confirmed final Second Board exit prompt; waiting for XBMResult.");
     }
@@ -5237,7 +5425,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, 0);
+        if (!TryFireCallback(addon, "XBMResult", "open-result", 0))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitNeedGreed);
         Log.Information("[Entry] XBMResult callback 0 dispatched; waiting for NeedGreed.");
     }
@@ -5273,7 +5464,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, -2);
+        if (!TryFireCallback(addon, "NeedGreed", "roll-need-greed", -2))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.ConfirmXbmResultExit);
         nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
         Log.Information("[Entry] NeedGreed roll dispatched callback=-2; waiting to close XBMResult.");
@@ -5287,7 +5481,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
-        Callback.Fire(addon, true, -1);
+        if (!TryFireCallback(addon, "XBMResult", "close-result", -1))
+        {
+            return;
+        }
         AdvanceEntry(EntryState.AwaitCentralShroud);
         nextEntryAction = DateTime.UtcNow.AddMilliseconds(500);
         Log.Information("[Entry] XBMResult exit callbacks dispatched; waiting for Central Shroud.");
@@ -5555,10 +5752,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static bool CanUseAction(uint actionId, ulong targetObjectId)
-        => ActionManager.Instance()->GetActionStatus(ActionType.Action, actionId, targetObjectId, true, true) == 0;
+    {
+        var actionManager = ActionManager.Instance();
+        return actionManager != null &&
+            actionManager->GetActionStatus(ActionType.Action, actionId, targetObjectId, true, true) == 0;
+    }
 
     private static bool UseAction(uint actionId, ulong targetObjectId)
-        => ActionManager.Instance()->UseAction(ActionType.Action, actionId, targetObjectId);
+    {
+        var actionManager = ActionManager.Instance();
+        return actionManager != null && actionManager->UseAction(ActionType.Action, actionId, targetObjectId);
+    }
 
     internal void UseDebugAction()
     {
@@ -5584,8 +5788,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             2 => ActionType.EventItem,
             _ => ActionType.Action,
         };
-        var status = ActionManager.Instance()->GetActionStatus(actionType, actionId, targetObjectId, true, true);
-        var dispatched = status == 0 && ActionManager.Instance()->UseAction(actionType, actionId, targetObjectId);
+        var actionManager = ActionManager.Instance();
+        if (actionManager == null)
+        {
+            Log.Warning($"[Debug] op=action-test actionId={actionId} rejected: ActionManager unavailable.");
+            return;
+        }
+
+        var status = actionManager->GetActionStatus(actionType, actionId, targetObjectId, true, true);
+        var dispatched = status == 0 && actionManager->UseAction(actionType, actionId, targetObjectId);
         Log.Information($"[Debug] op=action-test actionType={actionType} actionId={actionId} target=self " +
             $"targetObjectId={targetObjectId:X} hp={hp} status={status} dispatched={dispatched}.");
     }
@@ -5689,6 +5900,155 @@ public sealed unsafe class Plugin : IDalamudPlugin
         var manager = RaptureAtkUnitManager.Instance();
         var addon = manager == null ? null : manager->GetAddonByName(name);
         return addon != null && addon->IsReady && addon->IsVisible ? addon : null;
+    }
+
+    private bool TryFireCallback(AtkUnitBase* addon, string expectedAddon, string operation, params object[] values)
+    {
+        if (addon == null || !addon->IsReady || !addon->IsVisible ||
+            !string.Equals(addon->NameString, expectedAddon, StringComparison.Ordinal))
+        {
+            Log.Warning($"[Callback] rejected operation={operation} expectedAddon={expectedAddon} " +
+                $"actualAddon={(addon == null ? "null" : addon->NameString)} state={entryState}.");
+            return false;
+        }
+
+        if (!ValidateCallbackSchema(addon, expectedAddon, operation))
+        {
+            return false;
+        }
+
+        try
+        {
+            Callback.Fire(addon, true, values);
+            Log.Debug($"[Callback] dispatched operation={operation} addon={expectedAddon} " +
+                $"args={string.Join(",", values.Select(FormatCallbackValue))} state={entryState}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, $"[Callback] failed operation={operation} addon={expectedAddon} state={entryState}.");
+            FailEntry($"callback-failed:{operation}");
+            return false;
+        }
+    }
+
+    private bool ValidateCallbackSchema(AtkUnitBase* addon, string expectedAddon, string operation)
+    {
+        var minimumValues = expectedAddon switch
+        {
+            "SelectYesno" => 1,
+            "ContextMenu" => 9,
+            "XBMContentsMainHUD" => 16,
+            "XBMPetParty" => 7,
+            "XBMMonsterNotebook" => 30,
+            _ => 0,
+        };
+        if (minimumValues > 0 && (addon->AtkValues == null || addon->AtkValuesCount < minimumValues))
+        {
+            Log.Warning($"[Callback] rejected operation={operation} addon={expectedAddon} " +
+                $"atkValuesCount={addon->AtkValuesCount} minimum={minimumValues} state={entryState}.");
+            return false;
+        }
+
+        var schemaValid = expectedAddon switch
+        {
+            "SelectYesno" => IsAtkStringType(addon->AtkValues[0].Type),
+            "ContextMenu" => addon->AtkValues[0].Type == AtkValueType.UInt,
+            "XBMPetParty" => addon->AtkValues[5].Type == AtkValueType.Int,
+            _ => true,
+        };
+        if (!schemaValid)
+        {
+            Log.Warning($"[Callback] rejected operation={operation} addon={expectedAddon} " +
+                $"schema-invalid atkValuesCount={addon->AtkValuesCount} state={entryState}.");
+        }
+
+        return schemaValid;
+    }
+
+    private static bool IsAtkStringType(AtkValueType type)
+        => type is AtkValueType.String or AtkValueType.ConstString or AtkValueType.WideString or AtkValueType.ManagedString;
+
+    private static string FormatCallbackValue(object value)
+        => value is AtkValue atkValue ? atkValue.Type.ToString() : value?.ToString() ?? "null";
+
+    private static bool TryReadAtkStringValue(AtkUnitBase* addon, int index, out string value)
+    {
+        value = string.Empty;
+        if (!IsAtkIndexValid(addon, index))
+        {
+            return false;
+        }
+
+        var type = addon->AtkValues[index].Type;
+        if (!IsAtkStringType(type))
+        {
+            return false;
+        }
+
+        value = addon->AtkValues[index].GetValueAsString();
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private bool TryGetSelectYesnoPrompt(AtkUnitBase* addon, out string prompt)
+    {
+        if (!TryReadAtkStringValue(addon, 0, out prompt))
+        {
+            Log.Warning($"[UI] SelectYesno schema rejected state={entryState} " +
+                $"atkValuesCount={(addon == null ? 0 : addon->AtkValuesCount)}.");
+            return false;
+        }
+
+        Log.Debug($"[UI] SelectYesno prompt=\"{EscapeLog(prompt)}\" state={entryState}.");
+        return true;
+    }
+
+    private bool TryGetContextMenuUseIndex(AtkUnitBase* addon, out int useIndex)
+    {
+        useIndex = -1;
+        if (addon == null || addon->AtkValues == null || addon->AtkValuesCount < 9 ||
+            addon->AtkValues[0].Type != AtkValueType.UInt)
+        {
+            Log.Warning($"[UI] ContextMenu schema rejected state={entryState} " +
+                $"atkValuesCount={(addon == null ? 0 : addon->AtkValuesCount)}.");
+            return false;
+        }
+
+        var entriesCount = Math.Min((int)addon->AtkValues[0].UInt, addon->AtkValuesCount - 8);
+        for (var index = 0; index < entriesCount; index++)
+        {
+            var value = addon->AtkValues[8 + index];
+            if (!IsAtkStringType(value.Type))
+            {
+                continue;
+            }
+
+            var text = value.GetValueAsString().Trim();
+            if (string.Equals(text, "Use", StringComparison.OrdinalIgnoreCase))
+            {
+                useIndex = index;
+                Log.Debug($"[UI] ContextMenu Use entry index={useIndex} state={entryState}.");
+                return true;
+            }
+        }
+
+        Log.Warning($"[UI] ContextMenu has no English Use entry entries={entriesCount} state={entryState}.");
+        return false;
+    }
+
+    private static bool IsExpectedRouteAddon(string addonName, RouteNode? node)
+        => node == null || string.IsNullOrWhiteSpace(node.ExpectedAddon) ||
+            string.Equals(node.ExpectedAddon, addonName, StringComparison.OrdinalIgnoreCase);
+
+    private bool RequireExpectedRouteAddon(string addonName)
+    {
+        if (IsExpectedRouteAddon(addonName, CurrentRouteNode))
+        {
+            return true;
+        }
+
+        FailEntry($"route-addon-mismatch:expected={CurrentRouteNode?.ExpectedAddon}:actual={addonName}");
+        return false;
     }
 
     private bool SetNextRouteNode(string reason)
@@ -6860,16 +7220,23 @@ public sealed unsafe class Plugin : IDalamudPlugin
     }
 
     private static int ReadAtkInt(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
-        => IsAtkIndexValid(addon, index) ? addon->AtkValues[index].Int : 0;
+        => IsAtkIndexValid(addon, index) && addon->AtkValues[index].Type == AtkValueType.Int
+            ? addon->AtkValues[index].Int
+            : 0;
 
     private static uint ReadAtkUInt(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
-        => IsAtkIndexValid(addon, index) ? addon->AtkValues[index].UInt : 0;
+        => IsAtkIndexValid(addon, index) && addon->AtkValues[index].Type == AtkValueType.UInt
+            ? addon->AtkValues[index].UInt
+            : 0;
 
     private static bool ReadAtkBool(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
-        => IsAtkIndexValid(addon, index) && addon->AtkValues[index].Bool;
+        => IsAtkIndexValid(addon, index) && addon->AtkValues[index].Type == AtkValueType.Bool && addon->AtkValues[index].Bool;
 
     private static string ReadAtkString(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
-        => IsAtkIndexValid(addon, index) ? addon->AtkValues[index].GetValueAsString() : string.Empty;
+        => IsAtkIndexValid(addon, index) &&
+            addon->AtkValues[index].Type is AtkValueType.String or AtkValueType.ConstString or AtkValueType.WideString or AtkValueType.ManagedString
+            ? addon->AtkValues[index].GetValueAsString()
+            : string.Empty;
 
     private static bool IsAtkIndexValid(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
         => addon != null && addon->AtkValues != null && index >= 0 && index < addon->AtkValuesCount;
