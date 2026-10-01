@@ -175,6 +175,16 @@ public sealed class MainWindow : Window, IDisposable
             }
         }
 
+        var crucibleMode = plugin.CrucibleModeIndex;
+        ImGui.SetNextItemWidth(180f);
+        ImGui.BeginDisabled(plugin.EntryActive);
+        if (ImGui.Combo("Crucible mode", ref crucibleMode, Plugin.CrucibleModeComboItems))
+        {
+            plugin.SetCrucibleModeIndex(crucibleMode);
+        }
+
+        ImGui.EndDisabled();
+
         ImGui.SameLine();
         if (plugin.EntryActive)
         {
@@ -185,7 +195,14 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Checkbox("Loop after completion", ref loopRuns);
         ImGui.EndDisabled();
         ImGui.Separator();
-        var configured = plugin.IsBoardConfigurationComplete(selectedBoard, selectedBoard3RouteA);
+        var routeAvailable = plugin.IsCrucibleModeAvailable(selectedBoard, selectedBoard3RouteA);
+        if (!routeAvailable)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.25f, 1f),
+                $"No route data is configured for {plugin.CrucibleModeName} mode.");
+        }
+
+        var configured = routeAvailable && plugin.IsBoardConfigurationComplete(selectedBoard, selectedBoard3RouteA);
         if (configured)
         {
             ImGui.TextColored(new Vector4(0.35f, 0.85f, 0.45f, 1f), "Familiar setup is complete.");
@@ -708,11 +725,54 @@ public sealed class MainWindow : Window, IDisposable
             },
             4 => new[]
             {
-                new StageDisplay { Stage = 1, StageLabel = "Move 1", Encounter = "Strix Piece" },
-                new StageDisplay { Stage = 2, Variant = "B", StageLabel = "Move 2B", Encounter = "Random: Queen Hawk / Corpse Flower" },
-                new StageDisplay { Stage = 5, StageLabel = "Move 5", Encounter = "Gargoyle Piece" },
-                new StageDisplay { Stage = 7, Variant = "B", StageLabel = "Move 7B", Encounter = "Treant / Slugs" },
-                new StageDisplay { Stage = 9, StageLabel = "Move 9", Encounter = "Borgny / Toxic Mass" },
+                new StageDisplay
+                {
+                    Stage = 1,
+                    StageLabel = "Move 1",
+                    Encounter = "Strix Piece",
+                    MoveDetails = "Move 1\nEnemy 1: Combat 1 type of beast.\nSource: First Master's Board wiki.",
+                    EncounterDetails = "Strix Piece\nWeakness: Piercing\nVulnerabilities: Heavy, Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 2,
+                    Variant = "B",
+                    StageLabel = "Move 2B",
+                    Encounter = "Random: Queen Hawk / Corpse Flower",
+                    MoveDetails = "Move 2B - Right Path\nRandom Enemy or Treasure #1: Take your chances.\nSource: First Master's Board wiki.",
+                    EncounterDetails = "Corpse Flower Piece\nWeakness: Wind\nVulnerabilities: Blind\n\n" +
+                        "Queen Hawk Piece\nWeakness: Blunt\nVulnerabilities: Slow, Paralysis, Blind, Stun, Sleep, Flat damage",
+                },
+                new StageDisplay
+                {
+                    Stage = 5,
+                    StageLabel = "Move 5",
+                    Encounter = "Gargoyle Piece",
+                    MoveDetails = "Move 5\nElite Enemy 1: Combat 1 type of beast.\nSource: First Master's Board wiki.",
+                    EncounterDetails = "Gargoyle Piece\nWeakness: None\nVulnerabilities: None",
+                },
+                new StageDisplay
+                {
+                    Stage = 7,
+                    Variant = "B",
+                    StageLabel = "Move 7B",
+                    Encounter = "Treant / Slug / Sapling / Diremite / Biloko",
+                    MoveDetails = "Move 7B - Right Path\nEnemy 3: Combat 5 types of beast.\nSource: First Master's Board wiki.",
+                    EncounterDetails = "Treant Piece\nWeakness: Blunt\nVulnerabilities: Blind, Heavy, Poison\n\n" +
+                        "Slug Piece\nWeakness: Blunt\nVulnerabilities: Slow, Petrification, Paralysis, Blind, Stun, Sleep, Bind, Heavy, Flat damage, Poison\n\n" +
+                        "Sapling Piece\nWeakness: Blunt\nVulnerabilities: Slow, Blind, Flat damage, Poison\n\n" +
+                        "Diremite Piece\nWeakness: Ice\nVulnerabilities: Slow, Petrification, Paralysis, Blind, Stun, Sleep, Bind, Heavy, Flat damage\n\n" +
+                        "Biloko Piece\nWeakness: Ice\nVulnerabilities: Slow, Interruption, Flat damage, Poison",
+                },
+                new StageDisplay
+                {
+                    Stage = 9,
+                    StageLabel = "Move 9",
+                    Encounter = "Borgny / Toxic Mass",
+                    MoveDetails = "Move 9\nBoss of the Board: Combat 2 types of beast.\nSource: First Master's Board wiki.",
+                    EncounterDetails = "Borgny the Venomous\nWeakness: Earth\nVulnerabilities: None\n\n" +
+                        "Toxic Mass\nWeakness: Water\nVulnerabilities: Slow, Stun, Bind, Heavy, Flat damage",
+                },
             },
             _ => Array.Empty<StageDisplay>(),
         };

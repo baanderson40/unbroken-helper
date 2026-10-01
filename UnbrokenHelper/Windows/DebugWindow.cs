@@ -15,8 +15,9 @@ public sealed class DebugWindow : Window, IDisposable
         Territory,
         Player,
             Objects,
-            Addons,
+        Addons,
         Actions,
+        ActionTracker,
         FamiliarRosters,
         XBMPetSheet,
         XBMItemSheet,
@@ -80,6 +81,7 @@ public sealed class DebugWindow : Window, IDisposable
         DrawSectionButton(DebugSection.Objects, "Objects");
         DrawSectionButton(DebugSection.Addons, "Addons");
         DrawSectionButton(DebugSection.Actions, "Actions");
+        DrawSectionButton(DebugSection.ActionTracker, "Action Tracker");
         DrawSectionButton(DebugSection.FamiliarRosters, "Familiar Rosters");
         DrawSectionButton(DebugSection.XBMPetSheet, "XBMPet Sheet");
         DrawSectionButton(DebugSection.XBMItemSheet, "XBMItem Sheet");
@@ -127,6 +129,9 @@ public sealed class DebugWindow : Window, IDisposable
                 break;
             case DebugSection.Actions:
                 DrawActions();
+                break;
+            case DebugSection.ActionTracker:
+                DrawActionTracker();
                 break;
             case DebugSection.FamiliarRosters:
                 DrawFamiliarRosters();
@@ -528,6 +533,76 @@ public sealed class DebugWindow : Window, IDisposable
         {
             plugin.UseDebugPotion();
         }
+    }
+
+    private void DrawActionTracker()
+    {
+        ImGui.TextUnformatted("Action Tracker");
+        ImGui.TextWrapped("Capture native cast state for non-pet Battle NPCs currently mid-cast. Each capture is also written to the log. Instant actions do not expose cast state.");
+        ImGui.Separator();
+
+        if (ImGui.Button("Capture Casting Entities"))
+        {
+            plugin.CaptureBattleNpcActions();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Clear Tracker"))
+        {
+            plugin.ClearBattleNpcActionTracker();
+        }
+
+        var entries = plugin.BattleNpcActionTrackerEntries
+            .OrderBy(entry => entry.Name, StringComparer.Ordinal)
+            .ThenBy(entry => entry.ObjectId)
+            .ToArray();
+        var capturedAt = plugin.BattleNpcActionTrackerCapturedAt;
+        ImGui.TextUnformatted(capturedAt.HasValue
+            ? $"Captured: {capturedAt.Value:yyyy-MM-dd HH:mm:ss.fff} UTC | Casting entities: {entries.Length}"
+            : "No cast snapshot captured.");
+
+        if (!ImGui.BeginTable("##action-tracker-table", 9,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.ScrollY |
+                ImGuiTableFlags.SizingFixedFit, new Vector2(0f, -1f)))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("Entity");
+        ImGui.TableSetupColumn("Base ID");
+        ImGui.TableSetupColumn("Object ID");
+        ImGui.TableSetupColumn("Action Type");
+        ImGui.TableSetupColumn("Action ID");
+        ImGui.TableSetupColumn("Action Name");
+        ImGui.TableSetupColumn("Target ID");
+        ImGui.TableSetupColumn("Cast Time");
+        ImGui.TableSetupColumn("Interruptible");
+        ImGui.TableHeadersRow();
+
+        foreach (var entry in entries)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(entry.Name);
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted(entry.BaseId.ToString());
+            ImGui.TableSetColumnIndex(2);
+            ImGui.TextUnformatted($"{entry.ObjectId:X}");
+            ImGui.TableSetColumnIndex(3);
+            ImGui.TextUnformatted(entry.ActionType.ToString());
+            ImGui.TableSetColumnIndex(4);
+            ImGui.TextUnformatted(entry.ActionId.ToString());
+            ImGui.TableSetColumnIndex(5);
+            ImGui.TextUnformatted(entry.ActionName);
+            ImGui.TableSetColumnIndex(6);
+            ImGui.TextUnformatted(entry.TargetId);
+            ImGui.TableSetColumnIndex(7);
+            ImGui.TextUnformatted($"{entry.CurrentCastTime:0.00}/{entry.TotalCastTime:0.00}s");
+            ImGui.TableSetColumnIndex(8);
+            ImGui.TextUnformatted(entry.Interruptible ? "Yes" : "No");
+        }
+
+        ImGui.EndTable();
     }
 
     private void DrawAddons()

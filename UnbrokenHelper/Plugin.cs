@@ -42,6 +42,20 @@ internal sealed class NotebookFamiliarEntry
     internal uint PetId { get; init; }
 }
 
+internal sealed class BattleNpcActionTrackerEntry
+{
+    internal ulong ObjectId { get; init; }
+    internal uint BaseId { get; init; }
+    internal string Name { get; init; } = string.Empty;
+    internal byte ActionType { get; init; }
+    internal uint ActionId { get; init; }
+    internal string ActionName { get; init; } = string.Empty;
+    internal string TargetId { get; init; } = string.Empty;
+    internal float CurrentCastTime { get; init; }
+    internal float TotalCastTime { get; init; }
+    internal bool Interruptible { get; init; }
+}
+
 public sealed unsafe class Plugin : IDalamudPlugin
 {
     private const string CommandName = "/unbroken";
@@ -58,9 +72,21 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private const int TreasureDataMinimumWaitMilliseconds = 750;
     private const int TreasureDataMaximumWaitMilliseconds = 2000;
     private const int TreasureDataStablePollsRequired = 2;
+    private const uint SandstillStatusId = 4870;
+    private const int SandstillRestartTimeoutSeconds = 30;
+    private const int StageDetailModeSelectionMaximumAttempts = 8;
+    private const int StageDetailModeSelectionDelayMilliseconds = 300;
+    private static readonly string[] CrucibleModeNames =
+    {
+        "Standard",
+        "First Degree",
+        "Second Degree",
+        "Third Degree",
+    };
     private const uint ThiefsKnifeItemId = 243057;
     private const int ItemUseAttemptTimeoutMilliseconds = 2000;
     private const int ItemUseMaximumAttempts = 3;
+    private const int ActionTriggerMovementTimeoutSeconds = 15;
     private static readonly IReadOnlySet<uint> ItemAttackIds = new HashSet<uint>
     {
         243188, 243189, 243190, 243191, 243192, 243193, 243194, 243199,
@@ -93,39 +119,90 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private static readonly IReadOnlyDictionary<uint, int> BeastGearPriority =
         new Dictionary<uint, int>
         {
-            // Type 1: loot and progression.
+            // S tier: 1.
+            [243042] = 1, // Deepdrowned Axe
+            [243041] = 1, // Earthcrushed Axe
+            [243038] = 1, // Flame-wreathed Axe
             [243057] = 1, // Thief's Knife
+            [243027] = 1, // Hero's Crown
+            [243039] = 1, // Icebitten Axe
+            [243003] = 1, // Ring of Curing
+            [243040] = 1, // Thunderstruck Axe
+            [243043] = 1, // Windblown Axe
+            [243024] = 1, // Master Shield
+            [243025] = 1, // Mystic Veil
+            [243047] = 1, // Wind Shield
+            [243030] = 1, // Briar Armor
+
+            // A tier: 2.
+            [243035] = 2, // Astral Mantle
+            [243065] = 2, // Flame Knife
+            [243021] = 2, // Genji Armor
+            [243019] = 2, // Genji Gloves
+            [243011] = 2, // Green Beret
+            [243028] = 2, // Mirage Vest
+            [243044] = 2, // Ninja Suit
+            [243013] = 2, // Ring of Protection
+            [243008] = 2, // Staff of the Wise
+            [243012] = 2, // Mystic Boots
+            [243009] = 2, // Power Armlet
             [243058] = 2, // Thief's Garb
+            [243055] = 2, // Beastly Knife
+            [243070] = 2, // Spirited Ring
+            [243032] = 2, // Umbral Mantle
+            [243049] = 2, // Wind Armor
+            [243062] = 2, // Thunder Armor
+            [243015] = 2, // Earth Shield
+
+            // B tier: 3.
+            [243036] = 3, // Astral Band
+            [243017] = 3, // Force Shield
+            [243031] = 3, // Coward's Knife
+            [243056] = 3, // Beast Earring
+            [243074] = 3, // Haste Belt
+            [243054] = 3, // Beast Mask
+            [243004] = 3, // Chemist's Satchel
+            [243063] = 3, // Warded Shield
+            [243016] = 3, // Water Shield
+            [243029] = 3, // Soulreaper's Armor
+            [243037] = 3, // Astral Wristlet
+            [243020] = 3, // Genji Greatshield
+            [243006] = 3, // Steel Armor
+            [243051] = 3, // Mythril Armor
+            [243034] = 3, // Umbral Wristlet
+            [243033] = 3, // Umbral Band
+            [243001] = 3, // Belt of Constitution
+            [243061] = 3, // Thunder Axe
+            [243067] = 3, // Merchant's Cap
+            [243068] = 3, // Merchant's Garb
+            [243069] = 3, // Merchant's Shoes
+            [243060] = 3, // Thief's Boots
+            [243045] = 3, // Ninja Gloves
+            [243023] = 3, // Angel Robe
+            [243052] = 3, // Mythril Gloves
+            [243053] = 3, // Mythril Greaves
+            [243010] = 3, // Twisted Headband
             [243059] = 3, // Thief's Gloves
-            [243060] = 4, // Thief's Boots
-            [243027] = 5, // Hero's Crown
-            [243007] = 6, // Crown of the Wild
-            [243055] = 7, // Beastly Knife
+            [243066] = 3, // Flame Shield
+            [243005] = 3, // Hexed Hat
+            [243046] = 3, // Ninja Eyepatch
+            [243022] = 3, // Silver Specs
+            [243026] = 3, // Black Cowl
+            [243064] = 3, // Gold Hairpin
+            [243073] = 3, // Empress Hairpin
+            [243075] = 3, // Warrior's Buckler
+            [243048] = 3, // Wind Mask
+            [243018] = 3, // Crimson Ribbon
 
-            // Type 2: combat and survival.
-            [243024] = 8,  // Master Shield
-            [243021] = 9,  // Genji Armor
-            [243049] = 10, // Wind Armor
-            [243019] = 11, // Genji Gloves
-            [243054] = 12, // Beast Mask
-            [243056] = 13, // Beast Earring
-            [243051] = 14, // Mythril Armor
-            [243003] = 15, // Ring of Curing
+            // C tier: 4.
+            [243071] = 4, // Demonic Helm
+            [243072] = 4, // Demonic Armor
+            [243050] = 4, // Heavy Axe
+            [243007] = 4, // Crown of the Wild
 
-            // Type 3: speed and damage.
-            [243074] = 16, // Haste Belt
-            [243065] = 17, // Flame Knife
-            [243061] = 18, // Thunder Axe
-            [243050] = 19, // Heavy Axe
-            [243009] = 20, // Power Armlet
-            [243046] = 21, // Ninja Eyepatch
-            [243045] = 22, // Ninja Gloves
-            [243038] = 23, // Flame-wreathed Axe
-            [243039] = 23, // Icebitten Axe
-            [243040] = 23, // Thunderstruck Axe
-            [243041] = 23, // Earthcrushed Axe
-            [243042] = 23, // Deepdrowned Axe
-            [243043] = 23, // Windblown Axe
+            // D tier: 5.
+            [243014] = 5, // Ice Shield
+            [243002] = 5, // Ring of Sacrifice
         };
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
@@ -151,6 +228,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
     internal ulong PlayerObjectId => ObjectTable.LocalPlayer?.GameObjectId ?? 0;
     internal int DebugActionId { get; set; } = 46961;
     internal int DebugActionTypeIndex { get; set; }
+    internal IReadOnlyList<BattleNpcActionTrackerEntry> BattleNpcActionTrackerEntries
+        => battleNpcActionTracker.Values.ToArray();
+    internal DateTime? BattleNpcActionTrackerCapturedAt { get; private set; }
     internal void LogXBMPetRow(int rowId)
     {
         RawRow row;
@@ -296,11 +376,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly BoardRouteBoard? board2Definition;
     private readonly BoardRouteBoard? board3Definition;
     private readonly BoardRouteBoard? firstMastersBoardDefinition;
-    private readonly RouteNode? board1RouteNode;
-    private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board2RouteNodes;
-    private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3ARouteNodes;
-    private readonly IReadOnlyDictionary<RoutePhase, RouteNode> board3BRouteNodes;
-    private readonly IReadOnlyDictionary<RoutePhase, RouteNode> firstMastersRouteNodes;
+    private RouteNode? board1RouteNode;
+    private IReadOnlyDictionary<RoutePhase, RouteNode> board2RouteNodes = new Dictionary<RoutePhase, RouteNode>();
+    private IReadOnlyDictionary<RoutePhase, RouteNode> board3ARouteNodes = new Dictionary<RoutePhase, RouteNode>();
+    private IReadOnlyDictionary<RoutePhase, RouteNode> board3BRouteNodes = new Dictionary<RoutePhase, RouteNode>();
+    private IReadOnlyDictionary<RoutePhase, RouteNode> firstMastersRouteNodes = new Dictionary<RoutePhase, RouteNode>();
+    private BoardRouteCatalog routeCatalog = new();
+    private nint stageDetailModeAddon;
+    private int stageDetailModeAttempts;
+    private DateTime stageDetailModeLastAction;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private readonly ICallGateSubscriber<bool> vnavIsReady;
@@ -398,8 +482,33 @@ public sealed unsafe class Plugin : IDalamudPlugin
         internal bool DirectResultFlow { get; init; }
         internal uint[] CombatTargetBaseIds { get; init; } = Array.Empty<uint>();
         internal uint PriorityTargetBaseId { get; init; }
+        internal ActionTrigger[] ActionTriggers { get; init; } = Array.Empty<ActionTrigger>();
 
         internal string Key => Variant.Length == 0 ? $"Move{StageNumber}" : $"Move{StageNumber}{Variant}";
+    }
+
+    private sealed class ActionTrigger
+    {
+        internal uint SourceBaseId { get; init; }
+        internal uint ActionId { get; init; }
+        internal string ActionName { get; init; } = string.Empty;
+        internal ActionTriggerResponse Response { get; init; }
+        internal uint ResponseActionId { get; init; }
+        internal string ResponseActionName { get; init; } = string.Empty;
+        internal uint ResponseTargetBaseId { get; init; }
+    }
+
+    private enum ActionTriggerResponse
+    {
+        Snarl,
+        MoveToPetPosition,
+    }
+
+    private sealed class ActionTriggerMovementSession
+    {
+        internal (ulong ObjectId, uint ActionId) TriggerKey { get; init; }
+        internal Vector3 Destination { get; init; }
+        internal DateTime StartedAt { get; init; }
     }
 
     private RouteNode? CurrentRouteNode
@@ -445,9 +554,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private readonly HashSet<uint> usedAttackItemIds = new();
     private readonly HashSet<uint> failedItemUseIds = new();
     private readonly HashSet<ulong> snarledSahaginTargets = new();
+    private readonly HashSet<(ulong ObjectId, uint ActionId)> handledActionTriggers = new();
+    private ActionTriggerMovementSession? actionTriggerMovement;
+    private readonly Dictionary<ulong, BattleNpcActionTrackerEntry> battleNpcActionTracker = new();
     private bool stage4APulletWaveObserved;
     private bool stage4APulletReturnStarted;
     private bool preStageItemsHandled;
+    private bool sandstillArmed;
+    private bool sandstillRestartHandled;
     private PotionDebugState potionDebugState;
     private DateTime potionDebugStateStarted;
 
@@ -745,6 +859,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         MoveBehindKnight,
         MoveToStage4APriorityReturn,
         Combat,
+        AwaitSandstillRestart,
         AwaitContentsBotty,
         ExitContentsBotty,
         AwaitExitConfirmation,
@@ -840,6 +955,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         EntryState.AwaitKnightAction => "Bone Knight action resolution",
         EntryState.MoveBehindKnight => "VNav rear position",
         EntryState.Combat => GetCombatEntryTarget(),
+        EntryState.AwaitSandstillRestart => $"Sandstill restart target for {CurrentRouteNode?.Name ?? "move"}",
         EntryState.AwaitContentsBotty => "XBMContentsBooty",
         EntryState.ExitContentsBotty => "XBMContentsBooty callback 1",
         EntryState.AwaitExitConfirmation => "SelectYesno",
@@ -891,16 +1007,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
         configuration = PluginInterface.GetPluginConfig() as PluginConfiguration ?? new PluginConfiguration();
         configuration.Normalize();
         familiarCombatCatalog = new FamiliarCombatCatalogLoader(Log).Load(PluginInterface);
-        var routeCatalog = new BoardRouteCatalogLoader(Log).Load(PluginInterface);
+        routeCatalog = new BoardRouteCatalogLoader(Log).Load(PluginInterface);
         board1Definition = routeCatalog.FindBoard("board1");
         board2Definition = routeCatalog.FindBoard("board2");
         board3Definition = routeCatalog.FindBoard("board3");
         firstMastersBoardDefinition = routeCatalog.FindBoard("first-masters-board");
-        board1RouteNode = BuildRouteNode(routeCatalog.FindRoute("board1", "board1-default")?.Nodes.FirstOrDefault());
-        board2RouteNodes = BuildRoute(routeCatalog.FindRoute("board2", "board2-b"));
-        board3ARouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-a"));
-        board3BRouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-b"));
-        firstMastersRouteNodes = BuildRoute(routeCatalog.FindRoute("first-masters-board", "first-masters-default"));
+        ReloadConfiguredRoutes();
         if (board1RouteNode == null || board2RouteNodes.Count == 0 ||
             board3ARouteNodes.Count == 0 || board3BRouteNodes.Count == 0)
         {
@@ -1334,7 +1446,71 @@ public sealed unsafe class Plugin : IDalamudPlugin
             DirectResultFlow = nodeData.DirectResultFlow,
             CombatTargetBaseIds = nodeData.Combat.TargetBaseIds.ToArray(),
             PriorityTargetBaseId = nodeData.Combat.PriorityTargetBaseId,
+            ActionTriggers = nodeData.Combat.ActionTriggers
+                .Where(trigger => Enum.TryParse<ActionTriggerResponse>(trigger.Response, true, out _))
+                .Select(trigger => new ActionTrigger
+                {
+                    SourceBaseId = trigger.SourceBaseId,
+                    ActionId = trigger.ActionId,
+                    ActionName = trigger.ActionName,
+                    Response = Enum.Parse<ActionTriggerResponse>(trigger.Response, true),
+                    ResponseActionId = trigger.ResponseActionId,
+                    ResponseActionName = trigger.ResponseActionName,
+                    ResponseTargetBaseId = trigger.ResponseTargetBaseId,
+                })
+                .ToArray(),
         };
+    }
+
+    internal int CrucibleModeIndex => configuration.CrucibleModeIndex;
+
+    internal string CrucibleModeName => GetCrucibleModeName(configuration.CrucibleModeIndex);
+
+    internal static string CrucibleModeComboItems => string.Join("\0", CrucibleModeNames) + "\0";
+
+    internal void SetCrucibleModeIndex(int index)
+    {
+        if (EntryActive)
+        {
+            return;
+        }
+
+        var normalized = Math.Clamp(index, 0, CrucibleModeNames.Length - 1);
+        if (configuration.CrucibleModeIndex == normalized)
+        {
+            return;
+        }
+
+        configuration.CrucibleModeIndex = normalized;
+        ReloadConfiguredRoutes();
+        SaveConfiguration();
+        Log.Information($"[Config] Crucible mode changed mode={CrucibleModeName}.");
+    }
+
+    internal bool IsCrucibleModeAvailable(int board, bool board3RouteA)
+        => board switch
+        {
+            1 => board1RouteNode != null,
+            2 => board2RouteNodes.Count > 0,
+            3 => (board3RouteA ? board3ARouteNodes : board3BRouteNodes).Count > 0,
+            4 => firstMastersRouteNodes.Count > 0,
+            _ => false,
+        };
+
+    private static string GetCrucibleModeName(int index)
+        => CrucibleModeNames[Math.Clamp(index, 0, CrucibleModeNames.Length - 1)];
+
+    private void ReloadConfiguredRoutes()
+    {
+        var mode = CrucibleModeName;
+        board1RouteNode = BuildRouteNode(routeCatalog.FindRoute("board1", "board1-default", mode)?.Nodes.FirstOrDefault());
+        board2RouteNodes = BuildRoute(routeCatalog.FindRoute("board2", "board2-b", mode));
+        board3ARouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-a", mode));
+        board3BRouteNodes = BuildRoute(routeCatalog.FindRoute("board3", "board3-b", mode));
+        firstMastersRouteNodes = BuildRoute(routeCatalog.FindRoute("first-masters-board", "first-masters-default", mode));
+        Log.Information($"[Data] configured routes mode={mode} board1={board1RouteNode != null} " +
+            $"board2={board2RouteNodes.Count} board3A={board3ARouteNodes.Count} " +
+            $"board3B={board3BRouteNodes.Count} firstMasters={firstMastersRouteNodes.Count}.");
     }
 
     public void Dispose()
@@ -1377,6 +1553,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         selectedBoard = board;
         selectedBoard3Route = board == 3 ? board3Route : Board3RouteVariant.B;
+        if (!IsCrucibleModeAvailable(board, board3Route == Board3RouteVariant.A))
+        {
+            Log.Warning($"[Entry] No route data is configured for board={board} mode={CrucibleModeName}; " +
+                "entry automation was not started.");
+            return;
+        }
+
         if (board == 4 && !IsBoardConfigurationComplete(4, false))
         {
             Log.Warning("[Entry] First Master's Board route or familiar configuration is unavailable; entry automation was not started.");
@@ -1396,7 +1579,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         entryStateStarted = DateTime.UtcNow;
         nextEntryAction = DateTime.MinValue;
         var route = selectedBoard == 3 ? $" route=3{selectedBoard3Route}" : string.Empty;
-        Log.Information($"[Entry] started board={selectedBoard}{route} entry automation.");
+        Log.Information($"[Entry] started board={selectedBoard}{route} mode={CrucibleModeName} entry automation.");
     }
 
     private bool HasBoard3FamiliarConfiguration()
@@ -1666,6 +1849,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         CancelItemUse(reason);
         CancelRecovery(reason);
+        ClearActionTriggerRuntime();
+        ResetStageDetailModeSelection();
         TryStopVnav();
         movement.Clear();
         treasure.Clear();
@@ -1686,6 +1871,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         stage4APulletWaveObserved = false;
         stage4APulletReturnStarted = false;
         preStageItemsHandled = false;
+        sandstillArmed = false;
+        sandstillRestartHandled = false;
         boardChallengeConfirmed = false;
         laudaReadySince = null;
         Log.Information($"[Entry] runtime reset reason=\"{EscapeLog(reason)}\".");
@@ -1867,6 +2054,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
             case EntryState.Combat:
                 ProcessCombat();
                 break;
+            case EntryState.AwaitSandstillRestart:
+                ProcessSandstillRestart();
+                break;
             case EntryState.AwaitContentsBotty:
                 ProcessContentsBottyAvailability();
                 break;
@@ -1998,7 +2188,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private bool TryHandleMidStageResult()
     {
-        if (entryState is not (EntryState.Combat or EntryState.AwaitRecoveryMainHud or
+        if (entryState is not (EntryState.Combat or EntryState.AwaitSandstillRestart or EntryState.AwaitRecoveryMainHud or
             EntryState.AwaitRecoveryContextMenu or EntryState.AwaitRecoveryHp) ||
             GetReadyAddon("XBMResult") == null)
         {
@@ -2204,6 +2394,11 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         var addon = GetReadyAddon("XBMStageDetailList");
         if (addon == null)
+        {
+            return;
+        }
+
+        if (!EnsureStageDetailMode(addon))
         {
             return;
         }
@@ -2841,10 +3036,76 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return;
         }
 
+        if (!EnsureStageDetailMode(addon))
+        {
+            return;
+        }
+
         Callback.Fire(addon, true, 8);
         AdvanceEntry(EntryState.AwaitStageLoaded);
         movementConditionsClearSince = null;
         Log.Information($"[Entry] board={selectedBoard} move={CurrentRouteNode?.Name ?? "unknown"} commenced; waiting for move load.");
+    }
+
+    private bool EnsureStageDetailMode(AtkUnitBase* addon)
+    {
+        if (!TryReadStageDetailMode(addon, out var currentModeIndex))
+        {
+            nextEntryAction = DateTime.UtcNow.AddMilliseconds(StageDetailModeSelectionDelayMilliseconds);
+            return false;
+        }
+
+        var targetModeIndex = configuration.CrucibleModeIndex;
+        if (currentModeIndex == targetModeIndex)
+        {
+            if (stageDetailModeAttempts > 0)
+            {
+                Log.Information($"[Entry] stage mode confirmed current={GetCrucibleModeName(currentModeIndex)} " +
+                    $"target={CrucibleModeName} attempts={stageDetailModeAttempts}.");
+            }
+
+            ResetStageDetailModeSelection();
+            return true;
+        }
+
+        var addonAddress = (nint)addon;
+        if (stageDetailModeAddon != addonAddress)
+        {
+            stageDetailModeAddon = addonAddress;
+            stageDetailModeAttempts = 0;
+            stageDetailModeLastAction = DateTime.MinValue;
+        }
+
+        if (stageDetailModeAttempts >= StageDetailModeSelectionMaximumAttempts)
+        {
+            FailEntry($"stage-mode-selection-timeout:current={GetCrucibleModeName(currentModeIndex)}:" +
+                $"target={CrucibleModeName}");
+            return false;
+        }
+
+        if (DateTime.UtcNow - stageDetailModeLastAction <
+            TimeSpan.FromMilliseconds(StageDetailModeSelectionDelayMilliseconds))
+        {
+            nextEntryAction = stageDetailModeLastAction.AddMilliseconds(StageDetailModeSelectionDelayMilliseconds);
+            return false;
+        }
+
+        var callback = targetModeIndex > currentModeIndex ? 5 : 4;
+        Callback.Fire(addon, true, callback);
+        stageDetailModeAttempts++;
+        stageDetailModeLastAction = DateTime.UtcNow;
+        nextEntryAction = stageDetailModeLastAction.AddMilliseconds(StageDetailModeSelectionDelayMilliseconds);
+        Log.Information($"[Entry] stage mode change current={GetCrucibleModeName(currentModeIndex)} " +
+            $"target={CrucibleModeName} direction={(callback == 5 ? "next" : "previous")} " +
+            $"callback={callback} attempt={stageDetailModeAttempts}/{StageDetailModeSelectionMaximumAttempts}.");
+        return false;
+    }
+
+    private void ResetStageDetailModeSelection()
+    {
+        stageDetailModeAddon = 0;
+        stageDetailModeAttempts = 0;
+        stageDetailModeLastAction = DateTime.MinValue;
     }
 
     private void ProcessStageLoaded()
@@ -3006,6 +3267,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private void ProcessCombat()
     {
+        UpdateSandstillStatus();
+        if (ProcessActionTriggers())
+        {
+            return;
+        }
+
         if (HasEntryTransitionCondition())
         {
             return;
@@ -3034,6 +3301,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
             if (HasLivingCombatTarget())
             {
                 // Encounter targets can remain alive but temporarily untargetable.
+                return;
+            }
+
+            if (sandstillArmed && !sandstillRestartHandled)
+            {
+                sandstillRestartHandled = true;
+                TargetManager.Target = null;
+                AdvanceEntry(EntryState.AwaitSandstillRestart, 0);
+                Log.Information($"[Combat] Sandstill target reset detected move={CurrentRouteNode?.Key ?? "unknown"}; " +
+                    "waiting for the move target to respawn.");
                 return;
             }
 
@@ -3072,6 +3349,236 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         nextEntryAction = DateTime.UtcNow.AddMilliseconds(250);
+    }
+
+    private bool ProcessActionTriggers()
+    {
+        var node = CurrentRouteNode;
+        if (!IsCurrentBattleRouteNode() || node == null || node.ActionTriggers.Length == 0)
+        {
+            return false;
+        }
+
+        return ProcessActionTriggersForNode(node);
+    }
+
+    private bool ProcessActionTriggersForNode(RouteNode node)
+    {
+        var activeCasts = new List<(IGameObject Source, uint ActionId)>();
+        var activeCastKeys = new HashSet<(ulong ObjectId, uint ActionId)>();
+
+        foreach (var gameObject in ObjectTable)
+        {
+            if (gameObject.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc ||
+                !gameObject.IsValid() || gameObject is not ICharacter character ||
+                IsBattleNpcPet(gameObject) || character.Address == IntPtr.Zero)
+            {
+                continue;
+            }
+
+            var castInfo = ((Character*)character.Address)->GetCastInfo();
+            if (castInfo == null || !castInfo->IsCasting || castInfo->ActionId == 0)
+            {
+                continue;
+            }
+
+            var key = (gameObject.GameObjectId, castInfo->ActionId);
+            activeCasts.Add((gameObject, castInfo->ActionId));
+            activeCastKeys.Add(key);
+        }
+
+        handledActionTriggers.RemoveWhere(key => !activeCastKeys.Contains(key));
+
+        var movementSession = actionTriggerMovement;
+        if (movementSession != null)
+        {
+            if (DateTime.UtcNow - movementSession.StartedAt >=
+                TimeSpan.FromSeconds(ActionTriggerMovementTimeoutSeconds))
+            {
+                var timedOutKey = movementSession.TriggerKey;
+                StopMovement();
+                actionTriggerMovement = null;
+                handledActionTriggers.Add(timedOutKey);
+                Log.Warning($"[Combat] action-trigger response timed out response=MoveToPetPosition " +
+                    $"sourceObjectId={timedOutKey.ObjectId:X} actionId={timedOutKey.ActionId}.");
+                return true;
+            }
+
+            var movementResult = TryMoveToDestination(movementSession.Destination,
+                "action-trigger familiar position", "action-trigger-vnav-unavailable", CombatPositionArrivalRadius);
+            if (movementResult == MovementResult.Arrived)
+            {
+                var completedKey = movementSession.TriggerKey;
+                actionTriggerMovement = null;
+                handledActionTriggers.Add(completedKey);
+                Log.Information($"[Combat] action-trigger response completed response=MoveToPetPosition " +
+                    $"sourceObjectId={completedKey.ObjectId:X} actionId={completedKey.ActionId}.");
+            }
+
+            return true;
+        }
+
+        if (node.ActionTriggers.Length != 0)
+        {
+            foreach (var cast in activeCasts)
+            {
+                var trigger = node.ActionTriggers.FirstOrDefault(candidate =>
+                    candidate.ActionId == cast.ActionId &&
+                    (candidate.SourceBaseId == 0 || candidate.SourceBaseId == cast.Source.BaseId));
+                if (trigger == null)
+                {
+                    continue;
+                }
+
+                var key = (cast.Source.GameObjectId, cast.ActionId);
+                if (handledActionTriggers.Contains(key))
+                {
+                    continue;
+                }
+
+                var actionName = string.IsNullOrWhiteSpace(trigger.ActionName)
+                    ? GetActionName(trigger.ActionId)
+                    : trigger.ActionName;
+
+                if (trigger.Response == ActionTriggerResponse.MoveToPetPosition)
+                {
+                    var familiar = GetOwnedFamiliar();
+                    if (familiar == null)
+                    {
+                        return true;
+                    }
+
+                    actionTriggerMovement = new ActionTriggerMovementSession
+                    {
+                        TriggerKey = key,
+                        Destination = familiar.Position,
+                        StartedAt = DateTime.UtcNow,
+                    };
+                    Log.Information($"[Combat] action-trigger matched move={node.Key} source=" +
+                        $"\"{EscapeLog(cast.Source.Name.ToString())}\" sourceBaseId={cast.Source.BaseId} " +
+                        $"sourceObjectId={cast.Source.GameObjectId:X} actionId={cast.ActionId} " +
+                        $"actionName=\"{EscapeLog(actionName)}\" response=MoveToPetPosition " +
+                        $"familiarObjectId={familiar.GameObjectId:X} destination={FormatVector(familiar.Position)}.");
+                    return true;
+                }
+
+                if (trigger.Response == ActionTriggerResponse.Snarl)
+                {
+                    var target = GetCombatTargetByBaseId(trigger.ResponseTargetBaseId);
+                    if (target == null)
+                    {
+                        return true;
+                    }
+
+                    SetCombatTarget(target);
+                    if (!TryUseCombatAction(trigger.ResponseActionId, target))
+                    {
+                        return true;
+                    }
+
+                    handledActionTriggers.Add(key);
+                    Log.Information($"[Combat] action-trigger matched move={node.Key} source=" +
+                        $"\"{EscapeLog(cast.Source.Name.ToString())}\" sourceBaseId={cast.Source.BaseId} " +
+                        $"sourceObjectId={cast.Source.GameObjectId:X} actionId={cast.ActionId} " +
+                        $"actionName=\"{EscapeLog(actionName)}\" response=Snarl " +
+                        $"responseActionId={trigger.ResponseActionId} responseTargetObjectId={target.GameObjectId:X} " +
+                        $"responseTargetBaseId={target.BaseId} dispatched=True.");
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void ProcessSandstillRestart()
+    {
+        if (DateTime.UtcNow - entryStateStarted >= TimeSpan.FromSeconds(SandstillRestartTimeoutSeconds))
+        {
+            FailEntry("sandstill-restart-target-timeout");
+            return;
+        }
+
+        if (GetReadyAddon("XBMContentsBooty") != null)
+        {
+            sandstillArmed = false;
+            ResetStageCombatProviders("Sandstill target loss resolved as move completion");
+            AdvanceEntry(EntryState.AwaitContentsBotty, 0);
+            Log.Information("[Combat] Sandstill target loss resolved by XBMContentsBooty; continuing move exit.");
+            return;
+        }
+
+        if (HasEntryTransitionCondition())
+        {
+            return;
+        }
+
+        var target = GetCombatTarget();
+        if (target == null)
+        {
+            return;
+        }
+
+        TargetManager.Target = null;
+        ReassertCombatProvidersAfterSandstill();
+        SetCombatTarget(target);
+        sandstillArmed = false;
+        AdvanceEntry(EntryState.Combat, 250);
+        Log.Information($"[Combat] Sandstill restart target reacquired name=\"{EscapeLog(target.Name.ToString())}\" " +
+            $"baseId={target.BaseId} objectId={target.GameObjectId:X}; resuming move combat.");
+    }
+
+    private void UpdateSandstillStatus()
+    {
+        if (sandstillArmed || sandstillRestartHandled || !HasPlayerStatus(SandstillStatusId))
+        {
+            return;
+        }
+
+        sandstillArmed = true;
+        Log.Information($"[Combat] Sandstill armed statusId={SandstillStatusId} move={CurrentRouteNode?.Key ?? "unknown"}.");
+    }
+
+    private static bool HasPlayerStatus(uint statusId)
+    {
+        var player = ObjectTable.LocalPlayer;
+        if (player is not ICharacter character || character.Address == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var nativeCharacter = (Character*)character.Address;
+        var statusManager = nativeCharacter->GetStatusManager();
+        return statusManager != null && statusManager->HasStatus(statusId);
+    }
+
+    private void ReassertCombatProvidersAfterSandstill()
+    {
+        if (bossModPresetCreated)
+        {
+            try
+            {
+                bossModPresetActive = bossModSetActive.InvokeFunc(BossModPresetName);
+                if (!bossModPresetActive)
+                {
+                    Log.Warning($"[Combat] BossMod preset reassertion was rejected after Sandstill restart name={BossModPresetName}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[Combat] BossMod preset reassertion failed after Sandstill restart error={ex.GetType().Name}.");
+            }
+        }
+
+        try
+        {
+            rsrChangeMode.InvokeAction(3);
+            Log.Information("[Combat] RotationSolverReborn mode reasserted mode=Manual after Sandstill restart.");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[Combat] RSR reassertion failed after Sandstill restart error={ex.GetType().Name}.");
+        }
     }
 
     private void ProcessContentsBottyAvailability()
@@ -4157,7 +4664,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         AdvanceEntry(confirmationState);
         Log.Information($"[Entry] {TreasureRouteName()} selection={treasure.CompletedSelections + 1}/{treasure.RequiredSelections} " +
             $"option={optionIndex} itemId={treasure.SelectedItemId} name=\"{EscapeLog(selected?.Title ?? "unknown")}\" " +
-            $"reason={GetTreasureSelectionReason(selected)} gearRank={GetTreasureGearRank(selected)}; " +
+            $"reason={GetTreasureSelectionReason(selected)} gearTier={GetTreasureGearTier(selected)}; " +
             "waiting up to 2 seconds for confirmation.");
     }
 
@@ -4807,6 +5314,72 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
+    internal void ClearBattleNpcActionTracker()
+    {
+        battleNpcActionTracker.Clear();
+        BattleNpcActionTrackerCapturedAt = null;
+    }
+
+    internal void CaptureBattleNpcActions()
+    {
+        var now = DateTime.UtcNow;
+        battleNpcActionTracker.Clear();
+        foreach (var gameObject in ObjectTable)
+        {
+            if (gameObject.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc ||
+                !gameObject.IsValid() || gameObject is not ICharacter character || IsBattleNpcPet(gameObject) ||
+                character.Address == IntPtr.Zero)
+            {
+                continue;
+            }
+
+            var nativeCharacter = (Character*)character.Address;
+            var castInfo = nativeCharacter->GetCastInfo();
+            if (castInfo == null || !castInfo->IsCasting)
+            {
+                continue;
+            }
+
+            var entry = new BattleNpcActionTrackerEntry
+            {
+                ObjectId = gameObject.GameObjectId,
+                BaseId = gameObject.BaseId,
+                Name = gameObject.Name.ToString(),
+                ActionType = castInfo->ActionType,
+                ActionId = castInfo->ActionId,
+                ActionName = GetActionName(castInfo->ActionId),
+                TargetId = castInfo->TargetId.ToString() ?? string.Empty,
+                CurrentCastTime = castInfo->CurrentCastTime,
+                TotalCastTime = castInfo->TotalCastTime,
+                Interruptible = castInfo->Interruptible,
+            };
+            battleNpcActionTracker.Add(entry.ObjectId, entry);
+            Log.Information($"[ActionTracker] event=capture name=\"{EscapeLog(entry.Name)}\" " +
+                $"baseId={entry.BaseId} objectId={entry.ObjectId:X} actionType={entry.ActionType} actionId={entry.ActionId} " +
+                $"actionName=\"{EscapeLog(entry.ActionName)}\" " +
+                $"targetId={entry.TargetId} currentCastTime={entry.CurrentCastTime:0.000} " +
+                $"totalCastTime={entry.TotalCastTime:0.000} interruptible={entry.Interruptible}.");
+        }
+
+        BattleNpcActionTrackerCapturedAt = now;
+        Log.Information($"[ActionTracker] event=capture-complete count={battleNpcActionTracker.Count} capturedAt={now:O}.");
+    }
+
+    private string GetActionName(uint actionId)
+    {
+        var sheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+        if (sheet.TryGetRow(actionId, out var action))
+        {
+            var name = action.Name.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                return name;
+            }
+        }
+
+        return $"Unknown action {actionId}";
+    }
+
     private Dalamud.Game.ClientState.Objects.Types.IGameObject? GetCombatTarget()
     {
         var preferredTarget = GetPreferredCombatTarget();
@@ -4834,6 +5407,15 @@ public sealed unsafe class Plugin : IDalamudPlugin
             .OrderBy(gameObject => GetCombatTargetPriority(gameObject.BaseId))
             .ThenBy(gameObject => gameObject.GameObjectId)
             .FirstOrDefault();
+
+    private Dalamud.Game.ClientState.Objects.Types.IGameObject? GetCombatTargetByBaseId(uint baseId)
+        => baseId == 0
+            ? null
+            : ObjectTable.FirstOrDefault(gameObject =>
+                gameObject.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc &&
+                gameObject is IBattleNpc && gameObject.IsValid() && gameObject.IsTargetable &&
+                gameObject.BaseId == baseId && gameObject is ICharacter character && character.CurrentHp > 0 &&
+                !IsBattleNpcPet(gameObject));
 
     private Dalamud.Game.ClientState.Objects.Types.IGameObject? GetHostileCombatFallbackTarget()
     {
@@ -4930,6 +5512,24 @@ public sealed unsafe class Plugin : IDalamudPlugin
             gameObject.OwnerId == localPlayerId &&
             gameObject is IBattleNpc { BattleNpcKind: Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Pet } &&
             gameObject is ICharacter character && character.CurrentHp > 0);
+    }
+
+    private Dalamud.Game.ClientState.Objects.Types.IGameObject? GetOwnedFamiliar()
+    {
+        var localPlayer = ObjectTable.LocalPlayer;
+        if (localPlayer == null)
+        {
+            return null;
+        }
+
+        return ObjectTable
+            .Where(gameObject =>
+                gameObject.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc &&
+                gameObject.OwnerId == localPlayer.GameObjectId && gameObject.IsValid() &&
+                gameObject is IBattleNpc { BattleNpcKind: Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Pet } &&
+                gameObject is ICharacter character && character.CurrentHp > 0)
+            .OrderBy(gameObject => Vector3.Distance(localPlayer.Position, gameObject.Position))
+            .FirstOrDefault();
     }
 
     private void SetCombatTarget(Dalamud.Game.ClientState.Objects.Types.IGameObject target)
@@ -5030,6 +5630,17 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         movement.VnavStarted = false;
+    }
+
+    private void ClearActionTriggerRuntime()
+    {
+        if (actionTriggerMovement != null)
+        {
+            StopMovement();
+        }
+
+        actionTriggerMovement = null;
+        handledActionTriggers.Clear();
     }
 
     private MovementResult TryMoveToDestination(Vector3 destination, string label, string failureReason,
@@ -5137,10 +5748,13 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         Log.Information($"[Route] transition from={current?.Key ?? "None"}/{current?.Kind.ToString() ?? "None"} " +
             $"to={nextNode.Key}/{nextNode.Kind} reason=\"{EscapeLog(reason)}\".");
+        ClearActionTriggerRuntime();
         routePhase = next;
         randomOutcome = RandomOutcomeKind.None;
         usedAttackItemIds.Clear();
         failedItemUseIds.Clear();
+        sandstillArmed = false;
+        sandstillRestartHandled = false;
         recoveryNoUsableItemsRoute = RoutePhase.None;
         recoveryNoUsableItemsThreshold = 0;
         return true;
@@ -5654,6 +6268,10 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
         Log.Information($"[Debug] op=stage-detail-list available=true addon=XBMStageDetailList " +
             $"atkValuesCount={addon->AtkValuesCount} visible={addon->IsVisible} rootNode={(nint)addon->RootNode:X}");
+        var modeDetected = TryReadStageDetailMode(addon, out var modeIndex);
+        Log.Information($"[Debug] op=stage-detail-mode detected={modeDetected} " +
+            $"mode={(modeDetected ? GetCrucibleModeName(modeIndex) : "unknown")} " +
+            $"modeIndex={(modeDetected ? modeIndex : -1)} configured={CrucibleModeName}.");
 
         var nodeCount = 0;
         var visitedNodes = new HashSet<nint>();
@@ -5718,7 +6336,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 Log.Information($"[TreasureAnalysis] plan selection={selection}/{selectionCount} option={selected.OptionIndex} " +
                     $"itemId={selected.ItemId} name=\"{EscapeLog(selected.Title)}\" " +
                     $"healPercent={(knownRecovery ? recoveryItem.HealPercent : 0)} ash={(knownRecovery && recoveryItem.IsAsh)} " +
-                    $"reason={GetTreasureSelectionReason(selected)} gearRank={GetTreasureGearRank(selected)}");
+                    $"reason={GetTreasureSelectionReason(selected)} gearTier={GetTreasureGearTier(selected)}");
                 continue;
             }
 
@@ -5837,26 +6455,38 @@ public sealed unsafe class Plugin : IDalamudPlugin
             return "healing-priority";
         }
 
-        return BeastGearPriority.TryGetValue(selected.ItemId, out var rank)
-            ? $"gear-priority rank={rank}"
+        return BeastGearPriority.TryGetValue(selected.ItemId, out var tier)
+            ? $"gear-tier={GetGearTierLabel(tier)} value={tier}"
             : "default-fallback";
     }
 
-    private static string GetTreasureGearRank(TreasureCardInfo? selected)
+    private static string GetTreasureGearTier(TreasureCardInfo? selected)
         => selected != null && BeastGearPriority.TryGetValue(selected.ItemId, out var rank)
-            ? rank.ToString()
+            ? $"{GetGearTierLabel(rank)}({rank})"
             : "none";
+
+    private static string GetGearTierLabel(int tier)
+        => tier switch
+        {
+            1 => "S",
+            2 => "A",
+            3 => "B",
+            4 => "C",
+            5 => "D",
+            _ => "unknown",
+        };
 
     private void LogTreasureChoices(List<TreasureCardInfo> cards)
     {
         foreach (var card in cards)
         {
             var knownRecovery = RecoveryItems.TryGetValue(card.ItemId, out var recoveryItem);
-            var isGear = BeastGearPriority.TryGetValue(card.ItemId, out var gearRank);
+            var isGear = BeastGearPriority.TryGetValue(card.ItemId, out var gearTier);
             Log.Information($"[Entry] {TreasureRouteName()} possible option={card.OptionIndex} rowId={card.RowId} " +
                 $"itemId={card.ItemId} acquired={card.Acquired} healing={knownRecovery} " +
                 $"healPercent={(knownRecovery ? recoveryItem.HealPercent : 0)} ash={(knownRecovery && recoveryItem.IsAsh)} " +
-                $"gear={isGear} gearRank={(isGear ? gearRank : 0)} " +
+                $"gear={isGear} gearTier={(isGear ? GetGearTierLabel(gearTier) : "none")} " +
+                $"gearTierValue={(isGear ? gearTier : 0)} " +
                 $"name=\"{EscapeLog(card.Title)}\" effect=\"{EscapeLog(card.Effect.Replace("\r", "\\r").Replace("\n", "\\n"))}\"");
         }
     }
@@ -6160,6 +6790,75 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
     }
 
+    private static bool TryReadStageDetailMode(AtkUnitBase* addon, out int modeIndex)
+    {
+        modeIndex = -1;
+        if (addon == null)
+        {
+            return false;
+        }
+
+        var matches = new List<(string Text, float ScreenY)>();
+        CollectStageDetailModeTexts(&addon->UldManager, matches, new HashSet<nint>());
+        foreach (var match in matches.OrderBy(match => match.ScreenY))
+        {
+            for (var index = 0; index < CrucibleModeNames.Length; index++)
+            {
+                if (string.Equals(match.Text, CrucibleModeNames[index], StringComparison.OrdinalIgnoreCase))
+                {
+                    modeIndex = index;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static void CollectStageDetailModeTexts(
+        AtkUldManager* manager,
+        List<(string Text, float ScreenY)> matches,
+        HashSet<nint> visitedNodes)
+    {
+        if (manager == null || manager->NodeList == null)
+        {
+            return;
+        }
+
+        var count = Math.Min(manager->NodeListCount, (ushort)10000);
+        for (var index = 0; index < count; index++)
+        {
+            var node = manager->NodeList[index];
+            if (node == null || !visitedNodes.Add((nint)node) ||
+                !node->NodeFlags.HasFlag(NodeFlags.Visible))
+            {
+                continue;
+            }
+
+            if (node->GetNodeType() == NodeType.Text)
+            {
+                var text = ((AtkTextNode*)node)->NodeText.ToString().Trim();
+                if (CrucibleModeNames.Any(mode => string.Equals(mode, text, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matches.Add((text, node->ScreenY));
+                }
+
+                continue;
+            }
+
+            if (node->GetNodeType() != NodeType.Component)
+            {
+                continue;
+            }
+
+            var componentNode = node->GetAsAtkComponentNode();
+            if (componentNode != null && componentNode->Component != null)
+            {
+                CollectStageDetailModeTexts(&componentNode->Component->UldManager, matches, visitedNodes);
+            }
+        }
+    }
+
     private static int ReadAtkInt(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
         => IsAtkIndexValid(addon, index) ? addon->AtkValues[index].Int : 0;
 
@@ -6212,6 +6911,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 public sealed class PluginConfiguration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
+    public int CrucibleModeIndex { get; set; }
     public int PetHealthThresholdPercent { get; set; } = 100;
     public float MainWindowRunWidth { get; set; } = 640f;
     public float MainWindowRunHeight { get; set; } = 420f;
@@ -6248,6 +6948,7 @@ public sealed class PluginConfiguration : IPluginConfiguration
 
     public void Normalize()
     {
+        CrucibleModeIndex = Math.Clamp(CrucibleModeIndex, 0, 3);
         PetHealthThresholdPercent = Math.Clamp(PetHealthThresholdPercent, 1, 100);
         MainWindowRunWidth = NormalizeWindowDimension(MainWindowRunWidth, 640f, 200f, 4000f);
         MainWindowRunHeight = NormalizeWindowDimension(MainWindowRunHeight, 420f, 200f, 2400f);

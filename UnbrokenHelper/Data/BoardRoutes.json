@@ -7,6 +7,7 @@
       "routes": [
         {
           "key": "board1-default",
+          "mode": "Standard",
           "enabled": true,
           "nodes": [
             {
@@ -44,6 +45,7 @@
       "routes": [
         {
           "key": "board2-b",
+          "mode": "Standard",
           "enabled": true,
           "nodes": [
             {
@@ -360,6 +362,7 @@
       "routes": [
         {
           "key": "board3-a",
+          "mode": "Standard",
           "enabled": true,
           "nodes": [
             {
@@ -511,6 +514,7 @@
         },
         {
           "key": "board3-b",
+          "mode": "Standard",
           "enabled": true,
           "nodes": [
             {
@@ -690,6 +694,7 @@
       "routes": [
         {
           "key": "first-masters-default",
+          "mode": "Standard",
           "enabled": true,
           "nodes": [
             {
@@ -703,7 +708,21 @@
               "nextPhase": "FirstMastersMove2B",
               "familiarStageNumber": 1,
               "familiarRosterKey": "first-masters-move1",
-              "combat": { "displayName": "First Master's Board Move 1", "targetBaseIds": [ 19638 ], "priorityTargetBaseId": 19638 }
+              "combat": {
+                "displayName": "First Master's Board Move 1",
+                "targetBaseIds": [ 19638 ],
+                "priorityTargetBaseId": 19638,
+                "actionTriggers": [
+                  {
+                    "sourceBaseId": 19638,
+                    "actionId": 48669,
+                    "response": "Snarl",
+                    "responseActionId": 46751,
+                    "responseActionName": "Snarl",
+                    "responseTargetBaseId": 19638
+                  }
+                ]
+              }
             },
             {
               "phase": "FirstMastersMove2B",
@@ -716,7 +735,18 @@
               "nextPhase": "FirstMastersMove3",
               "familiarStageNumber": 2,
               "familiarRosterKey": "first-masters-move2b",
-              "combat": { "displayName": "First Master's Board Move 2B", "targetBaseIds": [ 19647, 19645 ], "priorityTargetBaseId": 19647 }
+              "combat": {
+                "displayName": "First Master's Board Move 2B",
+                "targetBaseIds": [ 19647, 19645 ],
+                "priorityTargetBaseId": 19647,
+                "actionTriggers": [
+                  {
+                    "sourceBaseId": 19645,
+                    "actionId": 48690,
+                    "response": "MoveToPetPosition"
+                  }
+                ]
+              }
             },
             {
               "phase": "FirstMastersMove3",
@@ -751,7 +781,27 @@
               "nextPhase": "FirstMastersMove6B",
               "familiarStageNumber": 5,
               "familiarRosterKey": "first-masters-move5",
-              "combat": { "displayName": "First Master's Board Move 5", "targetBaseIds": [ 19650 ], "priorityTargetBaseId": 19650 }
+              "combat": {
+                "displayName": "First Master's Board Move 5",
+                "targetBaseIds": [ 19650 ],
+                "priorityTargetBaseId": 19650,
+                "actionTriggers": [
+                  {
+                    "actionId": 50696,
+                    "response": "Snarl",
+                    "responseActionId": 46751,
+                    "responseActionName": "Snarl",
+                    "responseTargetBaseId": 19650
+                  },
+                  {
+                    "actionId": 48730,
+                    "response": "Snarl",
+                    "responseActionId": 46751,
+                    "responseActionName": "Snarl",
+                    "responseTargetBaseId": 19650
+                  }
+                ]
+              }
             },
             {
               "phase": "FirstMastersMove6B",
@@ -823,6 +873,230 @@
           { "instanceKey": "53521851208433664", "label": "move-8-alt-left", "routeHint": "unmapped", "position": { "x": -705.0, "y": 0.0, "z": -64.5 } },
           { "instanceKey": "53521876860796928", "label": "move-8-alt-right", "routeHint": "FirstMastersMove8B", "position": { "x": -695.0, "y": 0.0, "z": -64.5 } },
           { "instanceKey": "53039332990124032", "label": "move-9-center", "routeHint": "FirstMastersMove9", "position": { "x": -700.0, "y": 0.0, "z": -72.0 } }
+        ]
+      }
+    },
+    {
+      "key": "second-masters-board",
+      "territoryId": 1343,
+      "routes": [],
+      "moveCatalog": {
+        "stageListCallback": [ 1, 5 ],
+        "layout": "branching-grid",
+        "moves": [
+          {
+            "key": "Move1",
+            "kind": "Battle",
+            "name": "Move 1",
+            "position": { "x": -700.0, "y": 0.0, "z": -9.0 },
+              "combat": {
+                "displayName": "Second Master's Board Move 1",
+                "targetBaseIds": [ 19675 ],
+                "priorityTargetBaseId": 19675,
+                "actionTriggers": [
+                  {
+                    "sourceBaseId": 19675,
+                    "actionId": 49188,
+                    "actionName": "Erratic Blaster",
+                    "response": "Snarl",
+                    "responseActionId": 46751,
+                    "responseActionName": "Snarl",
+                    "responseTargetBaseId": 19675
+                  }
+                ]
+              }
+          },
+          {
+            "key": "Move2A",
+            "kind": "Battle",
+            "name": "Move 2A",
+            "position": { "x": -709.0, "y": 0.0, "z": -9.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 2A",
+              "targetBaseIds": [ 19678, 19677 ],
+              "priorityTargetBaseId": 19678
+            }
+          },
+          {
+            "key": "Move2B",
+            "kind": "Shop",
+            "name": "Move 2B shop",
+            "position": { "x": -691.0, "y": 0.0, "z": -9.0 }
+          },
+          { "key": "Move3A", "kind": "Rest", "name": "Move 3A rest" },
+          {
+            "key": "Move3B",
+            "kind": "Treasure",
+            "name": "Move 3B treasure",
+            "position": { "x": -700.0, "y": 0.0, "z": -18.0 }
+          },
+          {
+            "key": "Move3C",
+            "kind": "Random",
+            "name": "Move 3C random",
+            "position": { "x": -691.0, "y": 0.0, "z": -18.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 3C battle outcome",
+              "targetBaseIds": [ 19682, 19683, 19684, 19685 ],
+              "priorityTargetBaseId": 0
+            }
+          },
+          { "key": "Move4A", "kind": "Random", "name": "Move 4A random" },
+          {
+            "key": "Move4B",
+            "kind": "Battle",
+            "name": "Move 4B",
+            "position": { "x": -700.0, "y": 0.0, "z": -27.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 4B",
+              "targetBaseIds": [ 19701, 19700, 19698, 19696 ],
+              "priorityTargetBaseId": 19701
+            }
+          },
+          { "key": "Move4C", "kind": "Treasure", "name": "Move 4C treasure" },
+          {
+            "key": "Move5",
+            "kind": "Battle",
+            "name": "Move 5",
+            "position": { "x": -700.0, "y": 0.0, "z": -36.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 5",
+              "targetBaseIds": [ 19704, 19702 ],
+              "priorityTargetBaseId": 19704
+            }
+          },
+          {
+            "key": "Move6",
+            "kind": "Rest",
+            "name": "Move 6 rest",
+            "position": { "x": -700.0, "y": 0.0, "z": -45.0 }
+          },
+          { "key": "Move7A", "kind": "Random", "name": "Move 7A random" },
+          {
+            "key": "Move7B",
+            "kind": "Shop",
+            "name": "Move 7B shop",
+            "position": { "x": -691.0, "y": 0.0, "z": -45.0 }
+          },
+          { "key": "Move8A", "kind": "Treasure", "name": "Move 8A treasure" },
+          {
+            "key": "Move8B",
+            "kind": "Treasure",
+            "name": "Move 8B treasure",
+            "position": { "x": -682.0, "y": 0.0, "z": -45.0 }
+          },
+          { "key": "Move9A", "kind": "Battle", "name": "Move 9A" },
+          {
+            "key": "Move9B",
+            "kind": "Battle",
+            "name": "Move 9B",
+            "position": { "x": -682.0, "y": 0.0, "z": -54.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 9B",
+              "targetBaseIds": [ 19712, 19711, 19714, 19713, 19710 ],
+              "priorityTargetBaseId": 0
+            }
+          },
+          {
+            "key": "Move10",
+            "kind": "Battle",
+            "name": "Move 10",
+            "position": { "x": -700.0, "y": 0.0, "z": -54.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 10",
+              "targetBaseIds": [ 19717, 19719, 19715 ],
+              "priorityTargetBaseId": 0
+            }
+          },
+          {
+            "key": "Move11",
+            "kind": "Shop",
+            "name": "Move 11 shop",
+            "position": { "x": -700.0, "y": 0.0, "z": -63.0 }
+          },
+          { "key": "Move12A", "kind": "Random", "name": "Move 12A random" },
+          {
+            "key": "Move12B",
+            "kind": "Rest",
+            "name": "Move 12B rest",
+            "position": { "x": -700.0, "y": 0.0, "z": -72.0 }
+          },
+          { "key": "Move12C", "kind": "Treasure", "name": "Move 12C treasure" },
+          { "key": "Move13A", "kind": "Random", "name": "Move 13A random" },
+          { "key": "Move13B", "kind": "Battle", "name": "Move 13B" },
+          {
+            "key": "Move14",
+            "kind": "Battle",
+            "name": "Move 14 final",
+            "position": { "x": -700.0, "y": 0.0, "z": -81.0 },
+            "combat": {
+              "displayName": "Second Master's Board Move 14",
+              "targetBaseIds": [ 19742 ],
+              "priorityTargetBaseId": 19742
+            }
+          }
+        ],
+        "connections": [
+          { "from": "Move1", "to": "Move2A" },
+          { "from": "Move1", "to": "Move2B" },
+          { "from": "Move2A", "to": "Move3A" },
+          { "from": "Move2A", "to": "Move3B" },
+          { "from": "Move2B", "to": "Move3B" },
+          { "from": "Move2B", "to": "Move3C" },
+          { "from": "Move3A", "to": "Move4A" },
+          { "from": "Move3B", "to": "Move4B" },
+          { "from": "Move3C", "to": "Move4C" },
+          { "from": "Move4A", "to": "Move5" },
+          { "from": "Move4B", "to": "Move5" },
+          { "from": "Move4C", "to": "Move5" },
+          { "from": "Move5", "to": "Move6" },
+          { "from": "Move6", "to": "Move7A" },
+          { "from": "Move6", "to": "Move7B" },
+          { "from": "Move7A", "to": "Move8A" },
+          { "from": "Move7B", "to": "Move8B" },
+          { "from": "Move8A", "to": "Move9A" },
+          { "from": "Move8B", "to": "Move9B" },
+          { "from": "Move9A", "to": "Move10" },
+          { "from": "Move9B", "to": "Move10" },
+          { "from": "Move10", "to": "Move11" },
+          { "from": "Move11", "to": "Move12A" },
+          { "from": "Move11", "to": "Move12B" },
+          { "from": "Move11", "to": "Move12C" }
+        ],
+        "unresolvedConnections": [
+          "Moves 12A, 12B, 12C, 13A, and 13B require live route capture before a static route is defined.",
+          "Moves 13A, 12C, and 13B are collinear in the board layout."
+        ]
+      },
+      "collisionData": {
+        "layerKey": 39483,
+        "pcbPathCrc": "0x5C0ECE41",
+        "positions": [
+          { "instanceKey": "53039354481737728", "label": "move-1-center", "routeHint": "Move1", "position": { "x": -700.0, "y": 0.0, "z": -9.0 } },
+          { "instanceKey": "53039358776705024", "label": "move-4b-battle", "routeHint": "Move4B", "position": { "x": -700.0, "y": 0.0, "z": -27.0 } },
+          { "instanceKey": "53039363071672320", "label": "move-9b-battle", "routeHint": "Move9B", "position": { "x": -682.0, "y": 0.0, "z": -54.0 } },
+          { "instanceKey": "53039367349862400", "label": "grid-x-709-z-18", "routeHint": "unmapped", "position": { "x": -709.0, "y": 0.0, "z": -18.0 } },
+          { "instanceKey": "53039371644829696", "label": "move-3b-treasure", "routeHint": "Move3B", "position": { "x": -700.0, "y": 0.0, "z": -18.0 } },
+          { "instanceKey": "53039380234764288", "label": "grid-x-691-z-27", "routeHint": "unmapped", "position": { "x": -691.0, "y": 0.0, "z": -27.0 } },
+          { "instanceKey": "53039384529731584", "label": "move-2a-battle", "routeHint": "Move2A", "position": { "x": -709.0, "y": 0.0, "z": -9.0 } },
+          { "instanceKey": "53039388824698880", "label": "grid-x-718-z-45", "routeHint": "unmapped", "position": { "x": -718.0, "y": 0.0, "z": -45.0 } },
+          { "instanceKey": "53039393119666176", "label": "move-6-campsite", "routeHint": "Move6", "position": { "x": -700.0, "y": 0.0, "z": -45.0 } },
+          { "instanceKey": "53039397414633472", "label": "move-2b-shop", "routeHint": "Move2B", "position": { "x": -691.0, "y": 0.0, "z": -9.0 } },
+          { "instanceKey": "53039401709600768", "label": "move-14-final", "routeHint": "Move14", "position": { "x": -700.0, "y": 0.0, "z": -81.0 } },
+          { "instanceKey": "53521949992681472", "label": "move-3c-random-battle", "routeHint": "Move3C", "position": { "x": -691.0, "y": 0.0, "z": -18.0 } },
+          { "instanceKey": "53521954287648768", "label": "grid-x-709-z-27", "routeHint": "unmapped", "position": { "x": -709.0, "y": 0.0, "z": -27.0 } },
+          { "instanceKey": "53521962760142848", "label": "move-5-battle", "routeHint": "Move5", "position": { "x": -700.0, "y": 0.0, "z": -36.0 } },
+          { "instanceKey": "53522031597060096", "label": "grid-x-709-z-45", "routeHint": "unmapped", "position": { "x": -709.0, "y": 0.0, "z": -45.0 } },
+          { "instanceKey": "53522035774586880", "label": "move-7b-shop", "routeHint": "Move7B", "position": { "x": -691.0, "y": 0.0, "z": -45.0 } },
+          { "instanceKey": "53522040069554176", "label": "move-8b-treasure", "routeHint": "Move8B", "position": { "x": -682.0, "y": 0.0, "z": -45.0 } },
+          { "instanceKey": "53522048659488768", "label": "grid-x-718-z-54", "routeHint": "unmapped", "position": { "x": -718.0, "y": 0.0, "z": -54.0 } },
+          { "instanceKey": "53522117395742720", "label": "move-10-battle", "routeHint": "Move10", "position": { "x": -700.0, "y": 0.0, "z": -54.0 } },
+          { "instanceKey": "53522121673932800", "label": "move-11-shop", "routeHint": "Move11", "position": { "x": -700.0, "y": 0.0, "z": -63.0 } },
+          { "instanceKey": "53522126086340608", "label": "grid-x-709-z-63", "routeHint": "unmapped", "position": { "x": -709.0, "y": 0.0, "z": -63.0 } },
+          { "instanceKey": "53522130263867392", "label": "grid-x-691-z-63", "routeHint": "unmapped", "position": { "x": -691.0, "y": 0.0, "z": -63.0 } },
+          { "instanceKey": "53522134676275200", "label": "grid-x-709-z-72", "routeHint": "unmapped", "position": { "x": -709.0, "y": 0.0, "z": -72.0 } },
+          { "instanceKey": "53522168918573056", "label": "move-12b-rest", "routeHint": "Move12B", "position": { "x": -700.0, "y": 0.0, "z": -72.0 } },
+          { "instanceKey": "53522173213540352", "label": "grid-x-691-z-72", "routeHint": "unmapped", "position": { "x": -691.0, "y": 0.0, "z": -72.0 } }
         ]
       }
     }

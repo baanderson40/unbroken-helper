@@ -12,9 +12,24 @@ public sealed class BoardRouteCatalog
     public BoardRouteBoard? FindBoard(string key)
         => Boards.FirstOrDefault(board => string.Equals(board.Key, key, System.StringComparison.OrdinalIgnoreCase));
 
-    public BoardRouteDefinition? FindRoute(string boardKey, string routeKey)
-        => FindBoard(boardKey)?.Routes.FirstOrDefault(route =>
-            string.Equals(route.Key, routeKey, System.StringComparison.OrdinalIgnoreCase));
+    public BoardRouteDefinition? FindRoute(string boardKey, string routeKey, string mode = "Standard")
+    {
+        var routes = FindBoard(boardKey)?.Routes
+            .Where(route => string.Equals(route.Key, routeKey, System.StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (routes == null)
+        {
+            return null;
+        }
+
+        // Board geometry is shared across Crucible modes unless a mode-specific route is added later.
+        return routes.FirstOrDefault(route =>
+                   string.Equals(string.IsNullOrWhiteSpace(route.Mode) ? "Standard" : route.Mode,
+                       mode, System.StringComparison.OrdinalIgnoreCase)) ??
+               routes.FirstOrDefault(route =>
+                   string.Equals(string.IsNullOrWhiteSpace(route.Mode) ? "Standard" : route.Mode,
+                       "Standard", System.StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 public sealed class BoardRouteBoard
@@ -28,6 +43,7 @@ public sealed class BoardRouteBoard
 public sealed class BoardRouteDefinition
 {
     public string Key { get; set; } = string.Empty;
+    public string Mode { get; set; } = "Standard";
     public bool Enabled { get; set; }
     public List<BoardRouteNodeData> Nodes { get; set; } = new();
 }
@@ -55,6 +71,18 @@ public sealed class BoardCombatData
     public string DisplayName { get; set; } = string.Empty;
     public List<uint> TargetBaseIds { get; set; } = new();
     public uint PriorityTargetBaseId { get; set; }
+    public List<BoardActionTriggerData> ActionTriggers { get; set; } = new();
+}
+
+public sealed class BoardActionTriggerData
+{
+    public uint SourceBaseId { get; set; }
+    public uint ActionId { get; set; }
+    public string ActionName { get; set; } = string.Empty;
+    public string Response { get; set; } = string.Empty;
+    public uint ResponseActionId { get; set; }
+    public string ResponseActionName { get; set; } = string.Empty;
+    public uint ResponseTargetBaseId { get; set; }
 }
 
 public sealed class BoardCollisionData
